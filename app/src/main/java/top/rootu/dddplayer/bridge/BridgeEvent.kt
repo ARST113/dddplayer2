@@ -44,7 +44,8 @@ sealed class BridgeEvent {
         val position: Long?,
         val duration: Long?,
         val windowIndex: Int? = null,
-        val title: String? = null
+        val title: String? = null,
+        val reason: String? = null
     ) : BridgeEvent()
 
     data class PositionTick(
@@ -56,7 +57,8 @@ sealed class BridgeEvent {
         val bufferedPosition: Long?,
         val bufferedPercentage: Int?,
         val windowIndex: Int? = null,
-        val title: String? = null
+        val title: String? = null,
+        val reason: String? = null
     ) : BridgeEvent()
 
     data class SeekCompleted(
@@ -103,7 +105,8 @@ sealed class BridgeEvent {
         val endBy: String,
         val windowIndex: Int? = null,
         val playlistSize: Int? = null,
-        val title: String? = null
+        val title: String? = null,
+        val reason: String? = null
     ) : BridgeEvent()
 
     data class Error(

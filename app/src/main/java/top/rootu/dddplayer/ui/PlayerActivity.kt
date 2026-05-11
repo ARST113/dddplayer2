@@ -255,7 +255,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        viewModel.flushProgress(reason = "background", final = false)
+        viewModel.flushProgress(reason = "background", final = false, force = true)
     }
 
     override fun onDestroy() {
@@ -270,7 +270,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun finish() {
-        flushFinalOnce(finishReason)
+        flushFinalOnce("user_exit")
 
         if (shouldReturnResult) {
             val resultIntent = Intent("top.rootu.dddplayer.intent.result.VIEW")
