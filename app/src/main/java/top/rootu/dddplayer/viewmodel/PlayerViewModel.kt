@@ -47,6 +47,7 @@ import top.rootu.dddplayer.utils.StereoTypeDetector
 import top.rootu.dddplayer.utils.afr.RuntimeFpsDetector
 import top.rootu.dddplayer.utils.getString
 import androidx.media3.common.MediaItem as Media3MediaItem
+import java.util.concurrent.atomic.AtomicBoolean
 
 // --- Enums & Data Classes ---
 enum class SettingType {
@@ -108,6 +109,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile
     private var lastKnownSnapshot: PlaybackSnapshot? = null
+    private var lastEventFlushAt = 0L
+    private var lastEventFlushReason: String? = null
+    private var lastEventFlushPosition: Long? = null
+    private var lastEventFlushUri: String? = null
+    private var pendingSeekFromPosition: Long? = null
+    private var pendingSeekReason: String? = null
+    private var previousSnapshotForTransition: PlaybackSnapshot? = null
+    private val finalSessionFinishedSent = AtomicBoolean(false)
+    private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
+    private val EVENT_FLUSH_MIN_POSITION_DELTA_MS = 1_000L
 
     // Делегат для 3D/VR настроек
     val anaglyphDelegate = AnaglyphDelegate(repository)
@@ -293,7 +304,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         bufferedPosition = p.bufferedPosition,
                         bufferedPercentage = _bufferedPercentage.value,
                         windowIndex = p.currentMediaItemIndex,
-                        title = p.currentMediaItem?.mediaMetadata?.title?.toString()
+                        title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+                        reason = "tick"
                     )
                 )
                 lastBridgeTickAt = now
@@ -339,25 +351,51 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         return snapshot
     }
 
-    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null) {
-        val snapshot = updateLastKnownSnapshot(reason)
-        if (snapshot.uri == null && snapshot.position == null && lastKnownSnapshot == null) return
+    private fun PlaybackSnapshot.toPositionTick(reason: String) = BridgeEvent.PositionTick(
+        sessionId, System.currentTimeMillis(), uri, position, duration, bufferedPosition, bufferedPercentage, windowIndex, title, reason
+    )
+
+    private fun PlaybackSnapshot.toSessionFinished(endBy: String) = BridgeEvent.SessionFinished(
+        sessionId, System.currentTimeMillis(), uri, position, duration, endBy, windowIndex, playlistSize, title
+    )
+
+    private fun PlaybackSnapshot.toError(error: PlaybackException) = BridgeEvent.Error(
+        sessionId, System.currentTimeMillis(), uri, error.errorCodeName, error.errorCode, error.message, windowIndex, position, duration, bufferedPosition, bufferedPercentage, playlistSize, title, true
+    )
+
+    private fun shouldThrottleEventFlush(snapshot: PlaybackSnapshot, reason: String, force: Boolean): Boolean {
+        if (force) return false
+        val hardReasons = setOf("pause","resume","seek","seek_forward","seek_backward","manual_next","manual_previous","playlist_item_changed","ended","background","destroy","user_exit","error")
+        if (reason in hardReasons) return false
+        val now = System.currentTimeMillis()
+        val posDelta = kotlin.math.abs((snapshot.position ?: 0L) - (lastEventFlushPosition ?: 0L))
+        return reason == lastEventFlushReason && snapshot.uri == lastEventFlushUri && (now - lastEventFlushAt) < EVENT_FLUSH_MIN_INTERVAL_MS && posDelta < EVENT_FLUSH_MIN_POSITION_DELTA_MS
+    }
+
+    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false) {
+        val snapshot = capturePlaybackSnapshot(reason)
+        if (snapshot.uri == null && snapshot.position == null) return
+        if (shouldThrottleEventFlush(snapshot, reason, force)) return
+        lastKnownSnapshot = snapshot
+        lastEventFlushAt = System.currentTimeMillis()
+        lastEventFlushReason = reason
+        lastEventFlushPosition = snapshot.position
+        lastEventFlushUri = snapshot.uri
+        previousSnapshotForTransition = snapshot
         saveCurrentSettings()
-        if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
-            bridgeDispatcher?.emit(BridgeEvent.PositionTick(snapshot.sessionId, snapshot.ts, snapshot.uri, snapshot.position, snapshot.duration, snapshot.bufferedPosition, snapshot.bufferedPercentage, snapshot.windowIndex, snapshot.title))
+        if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(snapshot.toPositionTick(reason))
+        if (final && bridgeConfig.enabled && finalSessionFinishedSent.compareAndSet(false, true)) {
+            bridgeDispatcher?.emit(snapshot.toSessionFinished(reason))
         }
-        if (final && bridgeConfig.enabled) {
-            bridgeDispatcher?.emit(BridgeEvent.SessionFinished(snapshot.sessionId, System.currentTimeMillis(), snapshot.uri, snapshot.position, snapshot.duration, reason, snapshot.windowIndex, snapshot.playlistSize, snapshot.title))
-        }
-        if (includeError != null && bridgeConfig.enabled) {
-            bridgeDispatcher?.emit(BridgeEvent.Error(snapshot.sessionId, System.currentTimeMillis(), snapshot.uri, includeError.errorCode, includeError.message, snapshot.windowIndex, snapshot.position, snapshot.duration, snapshot.bufferedPosition, snapshot.bufferedPercentage, snapshot.playlistSize, snapshot.title, true))
-        }
+        if (includeError != null && bridgeConfig.enabled) bridgeDispatcher?.emit(snapshot.toError(includeError))
     }
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
-            updateLastKnownSnapshot("isPlayingChanged")
+            val reason = if (isPlaying) "resume" else "pause"
+            flushProgress(reason, force = true)
+            val snapshot = capturePlaybackSnapshot(reason)
             updateProgressUpdaterState()
             bridgeDispatcher?.emit(
                 BridgeEvent.PlaybackStateChanged(
@@ -366,8 +404,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
                     isPlaying = isPlaying,
                     isBuffering = _isBuffering.value == true,
-                    position = player?.currentPosition,
-                    duration = player?.duration
+                    position = snapshot.position,
+                    duration = snapshot.duration
                 )
             )
         }
@@ -380,9 +418,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // После буферизации или старта обновляем инфо
                 player?.videoFormat?.let { updateVideoInfoBadge(it) }
             }
+            if (playbackState == Player.STATE_BUFFERING) flushProgress("buffering")
+            if (playbackState == Player.STATE_READY) flushProgress("state_ready")
             if (playbackState == Player.STATE_ENDED) {
                 _playbackEnded.value = true
-                updateLastKnownSnapshot("ended")
+                flushProgress("ended", force = true)
                 val p = player
                 bridgeDispatcher?.emit(
                     BridgeEvent.PlaybackEnded(
@@ -398,6 +438,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
             updateProgressUpdaterState()
+            val snapshot = capturePlaybackSnapshot("playback_state_changed")
             bridgeDispatcher?.emit(
                 BridgeEvent.PlaybackStateChanged(
                     sessionId = bridgeConfig.sessionId,
@@ -405,8 +446,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
                     isPlaying = player?.isPlaying == true,
                     isBuffering = _isBuffering.value == true,
-                    position = player?.currentPosition,
-                    duration = player?.duration
+                    position = snapshot.position,
+                    duration = snapshot.duration
                 )
             )
             _isLive.value = player?.isCurrentMediaItemLive ?: false
@@ -423,6 +464,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         override fun onMediaItemTransition(mediaItem: Media3MediaItem?, reason: Int) {
             ioRetryCount = 0 // Сброс счетчика при смене видео
+            previousSnapshotForTransition?.let {
+                if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
+                    bridgeDispatcher?.emit(it.toPositionTick("before_playlist_item_changed"))
+                }
+            }
             handleMediaItemTransition(mediaItem)
             val p = player
             bridgeDispatcher?.emit(
@@ -440,6 +486,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     hasNext = p?.hasNextMediaItem() == true
                 )
             )
+            flushProgress("playlist_item_changed", force = true)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -460,8 +507,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             reason: Int
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                // При перемотке просто останавливаем текущий процесс детекции, если он был запущен.
                 fpsDetector.stop(player)
+                val delta = newPosition.positionMs - oldPosition.positionMs
+                val flushReason = pendingSeekReason ?: if (delta > 0) "seek_forward" else if (delta < 0) "seek_backward" else "seek"
+                pendingSeekFromPosition = null
+                pendingSeekReason = null
                 bridgeDispatcher?.emit(
                     BridgeEvent.SeekCompleted(
                         sessionId = bridgeConfig.sessionId,
@@ -471,6 +521,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         toPosition = newPosition.positionMs
                     )
                 )
+                flushProgress(flushReason, force = true)
             }
         }
     }
@@ -960,12 +1011,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun seekForward() = playerManager.seekForward()
     fun seekBack() = playerManager.seekBack()
     fun seekTo(pos: Long) {
-        player?.seekTo(pos)
+        val p = player ?: return
+        val from = p.currentPosition
+        pendingSeekFromPosition = from
+        pendingSeekReason = if (pos > from) "seek_forward" else if (pos < from) "seek_backward" else "seek"
+        p.seekTo(pos)
         _currentPosition.value = pos
     }
     fun togglePlayPause() = playerManager.togglePlayPause()
-    fun nextTrack() { if (player?.hasNextMediaItem() == true) player!!.seekToNextMediaItem() }
-    fun prevTrack() { if (player?.hasPreviousMediaItem() == true) player!!.seekToPreviousMediaItem() }
+    fun nextTrack() {
+        val p = player ?: return
+        if (p.hasNextMediaItem()) { pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true) }
+    }
+    fun prevTrack() {
+        val p = player ?: return
+        if (p.hasPreviousMediaItem()) { pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true) }
+    }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
         _playbackSpeed.value = speed
