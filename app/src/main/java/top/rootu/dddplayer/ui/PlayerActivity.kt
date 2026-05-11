@@ -18,7 +18,6 @@ import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import top.rootu.dddplayer.BuildConfig
 import top.rootu.dddplayer.R
@@ -26,6 +25,7 @@ import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeMediaItem
 import top.rootu.dddplayer.bridge.BridgeEvent
+import java.util.concurrent.atomic.AtomicBoolean
 import top.rootu.dddplayer.bridge.BroadcastTransport
 import top.rootu.dddplayer.utils.IntentUtils
 import top.rootu.dddplayer.viewmodel.PlayerViewModel
@@ -39,7 +39,8 @@ class PlayerActivity : AppCompatActivity() {
     private var isCompleted = false
     private var bridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
-    private var finishReason = "user"
+    private var finishReason = "user_exit"
+    private val finalFlushSent = AtomicBoolean(false)
     // Сохраняем Intent, чтобы обработать его после получения разрешения
     private var pendingIntent: Intent? = null
 
@@ -251,27 +252,33 @@ class PlayerActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+
+    override fun onStop() {
+        val shouldFlushBackground =
+            !isFinishing &&
+                    !isChangingConfigurations &&
+                    !finalFlushSent.get()
+
+        if (shouldFlushBackground) {
+            viewModel.flushProgress(reason = "background", final = false, force = true)
+        }
+
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        flushFinalOnce("destroy")
+        super.onDestroy()
+    }
+
+    private fun flushFinalOnce(reason: String) {
+        if (finalFlushSent.compareAndSet(false, true)) {
+            viewModel.flushProgress(reason = reason, final = true)
+        }
+    }
+
     override fun finish() {
-        viewModel.saveCurrentSettings()
-
-        val p = viewModel.player
-        val duration = p?.duration
-        val position = if (isCompleted) duration else p?.currentPosition
-        val uri = p?.currentMediaItem?.localConfiguration?.uri?.toString()
-
-        bridgeDispatcher?.emit(
-            BridgeEvent.SessionFinished(
-                sessionId = bridgeConfig.sessionId,
-                ts = System.currentTimeMillis(),
-                uri = uri,
-                position = position,
-                duration = duration?.let { if (it <= 0 || it == C.TIME_UNSET) null else it },
-                endBy = finishReason,
-                windowIndex = p?.currentMediaItemIndex,
-                playlistSize = p?.mediaItemCount,
-                title = p?.currentMediaItem?.mediaMetadata?.title?.toString()
-            )
-        )
+        flushFinalOnce(finishReason)
 
         if (shouldReturnResult) {
             val resultIntent = Intent("top.rootu.dddplayer.intent.result.VIEW")
@@ -279,8 +286,8 @@ class PlayerActivity : AppCompatActivity() {
             // Возвращаем URI текущего видео (полезно, если это был плейлист)
             resultIntent.data = viewModel.player?.currentMediaItem?.localConfiguration?.uri
 
-            resultIntent.putExtra("position", position)
-            resultIntent.putExtra("duration", duration)
+            resultIntent.putExtra("position", viewModel.currentPosition.value ?: 0L)
+            resultIntent.putExtra("duration", viewModel.duration.value ?: 0L)
 
             // Сообщаем, закончилось ли видео само ("completion") или закрыл юзер ("user")
             resultIntent.putExtra("end_by", finishReason)
