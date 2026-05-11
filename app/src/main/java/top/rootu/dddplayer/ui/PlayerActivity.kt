@@ -18,14 +18,13 @@ import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import top.rootu.dddplayer.BuildConfig
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeMediaItem
-import top.rootu.dddplayer.bridge.BridgeEvent
+import java.util.concurrent.atomic.AtomicBoolean
 import top.rootu.dddplayer.bridge.BroadcastTransport
 import top.rootu.dddplayer.utils.IntentUtils
 import top.rootu.dddplayer.viewmodel.PlayerViewModel
@@ -40,6 +39,7 @@ class PlayerActivity : AppCompatActivity() {
     private var bridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
     private var finishReason = "user"
+    private val finalFlushSent = AtomicBoolean(false)
     // Сохраняем Intent, чтобы обработать его после получения разрешения
     private var pendingIntent: Intent? = null
 
@@ -251,27 +251,25 @@ class PlayerActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.flushProgress(reason = "background", final = false)
+    }
+
+    override fun onDestroy() {
+        flushFinalOnce("destroy")
+        super.onDestroy()
+    }
+
+    private fun flushFinalOnce(reason: String) {
+        if (finalFlushSent.compareAndSet(false, true)) {
+            viewModel.flushProgress(reason = reason, final = true)
+        }
+    }
+
     override fun finish() {
-        viewModel.saveCurrentSettings()
-
-        val p = viewModel.player
-        val duration = p?.duration
-        val position = if (isCompleted) duration else p?.currentPosition
-        val uri = p?.currentMediaItem?.localConfiguration?.uri?.toString()
-
-        bridgeDispatcher?.emit(
-            BridgeEvent.SessionFinished(
-                sessionId = bridgeConfig.sessionId,
-                ts = System.currentTimeMillis(),
-                uri = uri,
-                position = position,
-                duration = duration?.let { if (it <= 0 || it == C.TIME_UNSET) null else it },
-                endBy = finishReason,
-                windowIndex = p?.currentMediaItemIndex,
-                playlistSize = p?.mediaItemCount,
-                title = p?.currentMediaItem?.mediaMetadata?.title?.toString()
-            )
-        )
+        flushFinalOnce(finishReason)
 
         if (shouldReturnResult) {
             val resultIntent = Intent("top.rootu.dddplayer.intent.result.VIEW")

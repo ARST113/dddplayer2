@@ -66,6 +66,24 @@ data class TrackOption(
     val isOff: Boolean = false
 )
 
+
+
+data class PlaybackSnapshot(
+    val sessionId: String?,
+    val ts: Long,
+    val uri: String?,
+    val position: Long?,
+    val duration: Long?,
+    val bufferedPosition: Long?,
+    val bufferedPercentage: Int?,
+    val windowIndex: Int?,
+    val playlistSize: Int?,
+    val title: String?,
+    val isPlaying: Boolean?,
+    val playbackState: Int?,
+    val reason: String?
+)
+
 data class VideoQualityOption(
     val name: String,
     val width: Int,
@@ -87,6 +105,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var bridgeConfig: BridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
     private var lastBridgeTickAt = 0L
+
+    @Volatile
+    private var lastKnownSnapshot: PlaybackSnapshot? = null
 
     // Делегат для 3D/VR настроек
     val anaglyphDelegate = AnaglyphDelegate(repository)
@@ -276,14 +297,67 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
                 lastBridgeTickAt = now
+                updateLastKnownSnapshot("tick")
             }
             handler.postDelayed(this, 200)
+        }
+    }
+
+
+    private fun normalizePosition(position: Long, duration: Long?, playbackState: Int?): Long {
+        val safePosition = if (position < 0) 0L else position
+        if (playbackState == Player.STATE_ENDED && duration != null) return duration
+        return if (duration != null && safePosition > duration) duration else safePosition
+    }
+
+    private fun capturePlaybackSnapshot(reason: String): PlaybackSnapshot {
+        val p = player
+        val fallback = lastKnownSnapshot
+        if (p == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
+            ?: PlaybackSnapshot(bridgeConfig.sessionId, System.currentTimeMillis(), null, null, null, null, null, null, null, null, null, null, reason)
+        val normalizedDuration = normalizeDuration(p.duration)
+        return PlaybackSnapshot(
+            sessionId = bridgeConfig.sessionId,
+            ts = System.currentTimeMillis(),
+            uri = p.currentMediaItem?.localConfiguration?.uri?.toString() ?: fallback?.uri,
+            position = normalizePosition(p.currentPosition, normalizedDuration, p.playbackState),
+            duration = normalizedDuration,
+            bufferedPosition = p.bufferedPosition,
+            bufferedPercentage = _bufferedPercentage.value,
+            windowIndex = p.currentMediaItemIndex,
+            playlistSize = p.mediaItemCount,
+            title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+            isPlaying = p.isPlaying,
+            playbackState = p.playbackState,
+            reason = reason
+        )
+    }
+
+    private fun updateLastKnownSnapshot(reason: String): PlaybackSnapshot {
+        val snapshot = capturePlaybackSnapshot(reason)
+        lastKnownSnapshot = snapshot
+        return snapshot
+    }
+
+    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null) {
+        val snapshot = updateLastKnownSnapshot(reason)
+        if (snapshot.uri == null && snapshot.position == null && lastKnownSnapshot == null) return
+        saveCurrentSettings()
+        if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
+            bridgeDispatcher?.emit(BridgeEvent.PositionTick(snapshot.sessionId, snapshot.ts, snapshot.uri, snapshot.position, snapshot.duration, snapshot.bufferedPosition, snapshot.bufferedPercentage, snapshot.windowIndex, snapshot.title))
+        }
+        if (final && bridgeConfig.enabled) {
+            bridgeDispatcher?.emit(BridgeEvent.SessionFinished(snapshot.sessionId, System.currentTimeMillis(), snapshot.uri, snapshot.position, snapshot.duration, reason, snapshot.windowIndex, snapshot.playlistSize, snapshot.title))
+        }
+        if (includeError != null && bridgeConfig.enabled) {
+            bridgeDispatcher?.emit(BridgeEvent.Error(snapshot.sessionId, System.currentTimeMillis(), snapshot.uri, includeError.errorCode, includeError.message, snapshot.windowIndex, snapshot.position, snapshot.duration, snapshot.bufferedPosition, snapshot.bufferedPercentage, snapshot.playlistSize, snapshot.title, true))
         }
     }
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
+            updateLastKnownSnapshot("isPlayingChanged")
             updateProgressUpdaterState()
             bridgeDispatcher?.emit(
                 BridgeEvent.PlaybackStateChanged(
@@ -308,6 +382,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             if (playbackState == Player.STATE_ENDED) {
                 _playbackEnded.value = true
+                updateLastKnownSnapshot("ended")
                 val p = player
                 bridgeDispatcher?.emit(
                     BridgeEvent.PlaybackEnded(
@@ -341,17 +416,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (tryRecoverFromError(error)) {
                 return
             }
+            flushProgress(reason = "error", final = true, includeError = error)
             _fatalError.postValue(error)
             _isPlaying.postValue(false)
-            bridgeDispatcher?.emit(
-                BridgeEvent.Error(
-                    sessionId = bridgeConfig.sessionId,
-                    ts = System.currentTimeMillis(),
-                    uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
-                    code = error.errorCodeName,
-                    message = error.message
-                )
-            )
         }
 
         override fun onMediaItemTransition(mediaItem: Media3MediaItem?, reason: Int) {
