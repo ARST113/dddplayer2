@@ -25,7 +25,7 @@ class UpdateManager(private val context: Context) {
     suspend fun checkForUpdates(currentVersionName: String?, channel: UpdateChannel): UpdateInfo? = withContext(Dispatchers.IO) {
         if (channel == UpdateChannel.DISABLED) return@withContext null
         val primary = if (channel == UpdateChannel.NIGHTLY) nightlyUrl else latestUrl
-        val release = fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null ?: return@withContext null
+        val release = (fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null) ?: return@withContext null
         val tag = release.optString("tag_name")
         if (currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag) && currentVersionName != "nightly") return@withContext null
         val asset = pickApkAsset(release.optJSONArray("assets") ?: return@withContext null) ?: return@withContext null

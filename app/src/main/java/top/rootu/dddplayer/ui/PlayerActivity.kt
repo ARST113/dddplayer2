@@ -24,6 +24,7 @@ import top.rootu.dddplayer.R
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeMediaItem
+import top.rootu.dddplayer.bridge.BridgeEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import top.rootu.dddplayer.bridge.BroadcastTransport
 import top.rootu.dddplayer.utils.IntentUtils
@@ -277,8 +278,8 @@ class PlayerActivity : AppCompatActivity() {
             // Возвращаем URI текущего видео (полезно, если это был плейлист)
             resultIntent.data = viewModel.player?.currentMediaItem?.localConfiguration?.uri
 
-            resultIntent.putExtra("position", position)
-            resultIntent.putExtra("duration", duration)
+            resultIntent.putExtra("position", viewModel.currentPosition.value ?: 0L)
+            resultIntent.putExtra("duration", viewModel.duration.value ?: 0L)
 
             // Сообщаем, закончилось ли видео само ("completion") или закрыл юзер ("user")
             resultIntent.putExtra("end_by", finishReason)
