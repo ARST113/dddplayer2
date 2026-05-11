@@ -13,8 +13,9 @@ object VersionComparator {
 
     private fun parse(value: String): List<Int>? {
         val cleaned = value.removePrefix("v")
-        val nums = Regex("(\\d+)").findAll(cleaned).take(3).map { it.value.toIntOrNull() ?: 0 }.toList()
-        if (nums.size < 3) return null
+        val nums = Regex("(\\d+)").findAll(cleaned).take(3).map { it.value.toIntOrNull() ?: 0 }.toMutableList()
+        if (nums.isEmpty()) return null
+        while (nums.size < 3) nums.add(0)
         return nums
     }
 }

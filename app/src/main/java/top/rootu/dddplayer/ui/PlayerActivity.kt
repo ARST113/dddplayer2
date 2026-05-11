@@ -39,7 +39,7 @@ class PlayerActivity : AppCompatActivity() {
     private var isCompleted = false
     private var bridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
-    private var finishReason = "user"
+    private var finishReason = "user_exit"
     private val finalFlushSent = AtomicBoolean(false)
     // Сохраняем Intent, чтобы обработать его после получения разрешения
     private var pendingIntent: Intent? = null
@@ -254,8 +254,16 @@ class PlayerActivity : AppCompatActivity() {
 
 
     override fun onStop() {
+        val shouldFlushBackground =
+            !isFinishing &&
+                    !isChangingConfigurations &&
+                    !finalFlushSent.get()
+
+        if (shouldFlushBackground) {
+            viewModel.flushProgress(reason = "background", final = false, force = true)
+        }
+
         super.onStop()
-        viewModel.flushProgress(reason = "background", final = false)
     }
 
     override fun onDestroy() {
