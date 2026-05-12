@@ -33,6 +33,9 @@ class LocalBridgeStore(private val maxEvents: Int = 200) {
 
     fun append(envelope: BridgeEnvelope) = synchronized(lock) {
         val k = key(envelope.sessionId)
+        if (envelope.payload is BridgeEvent.SessionStarted) {
+            events.remove(k)
+        }
         states[k] = envelope
         val q = events.getOrPut(k) { ArrayDeque() }
         q.addLast(envelope)
@@ -84,7 +87,7 @@ class LocalBridgeStore(private val maxEvents: Int = 200) {
     fun getStateView(sessionId: String?): LocalBridgeState? = synchronized(lock) { stateView[key(sessionId)] }
 
     fun getEvents(sessionId: String?, sinceTs: Long? = null, limit: Int? = null): List<BridgeEnvelope> = synchronized(lock) {
-        val list = events[key(sessionId)]?.toList().orEmpty().filter { sinceTs == null || it.ts >= sinceTs }
+        val list = events[key(sessionId)]?.toList().orEmpty().filter { sinceTs == null || it.ts > sinceTs }
         if (limit == null || limit <= 0) list else list.takeLast(limit)
     }
 

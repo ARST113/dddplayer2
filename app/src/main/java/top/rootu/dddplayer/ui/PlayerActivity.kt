@@ -33,6 +33,7 @@ import top.rootu.dddplayer.bridge.CompositeTransport
 import top.rootu.dddplayer.bridge.LocalBridgeServer
 import top.rootu.dddplayer.bridge.LocalBridgeStore
 import top.rootu.dddplayer.bridge.LocalBridgeTransport
+import top.rootu.dddplayer.bridge.LocalBridgeManager
 import top.rootu.dddplayer.bridge.BridgeMode
 import java.util.concurrent.atomic.AtomicBoolean
 import top.rootu.dddplayer.bridge.BroadcastTransport
@@ -186,14 +187,14 @@ class PlayerActivity : AppCompatActivity() {
 
         shouldReturnResult = intent.getBooleanExtra("return_result", false)
         bridgeConfig = IntentUtils.parseBridgeConfig(intent)
-        if (localBridgeServer != null) {
-            stopLocalBridgeNow()
-        }
         bridgeDispatcher = createBridgeDispatcher(bridgeConfig)
 
         val (playlist, startIndex) = IntentUtils.parseIntent(this, intent)
         when {
             playlist.isNotEmpty() -> {
+                finalFlushSent.set(false)
+                finishReason = "user_exit"
+                isCompleted = false
                 viewModel.setBridgeDispatcher(bridgeDispatcher, bridgeConfig)
                 val current = playlist.getOrNull(startIndex)
                 val startPosition = current?.startPositionMs ?: 0L
@@ -216,6 +217,9 @@ class PlayerActivity : AppCompatActivity() {
                 )
             }
             BuildConfig.DEBUG -> {
+                finalFlushSent.set(false)
+                finishReason = "user_exit"
+                isCompleted = false
                 // Дефолтное видео для теста (только в DEBUG)
                 val defaultUri = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 //                val defaultUri = "http://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8"
@@ -285,7 +289,7 @@ class PlayerActivity : AppCompatActivity() {
             flushFinalOnce("destroy")
         }
         super.onDestroy()
-        if (isChangingConfigurations) stopLocalBridgeNow() else stopLocalBridgeDelayed()
+        if (isChangingConfigurations) LocalBridgeManager.stopNow() else LocalBridgeManager.stopDelayed(5000L)
     }
 
     private fun createBridgeDispatcher(config: BridgeConfig): BridgeDispatcher? {
@@ -296,9 +300,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         if (config.mode == BridgeMode.LOCAL || config.mode == BridgeMode.BOTH) {
             runCatching {
-                val store = LocalBridgeStore(config.localMaxEvents)
-                localBridgeStore = store
-                localBridgeServer = LocalBridgeServer(config.localHost, config.localPort, config.localToken, store).also { it.start() }
+                val store = LocalBridgeManager.startOrReuse(config)
                 transports += LocalBridgeTransport(config, store)
             }.onFailure { e ->
                 Log.e("DDDLocalBridge", "Failed to start local bridge on ${config.localHost}:${config.localPort}", e)
@@ -309,19 +311,6 @@ class PlayerActivity : AppCompatActivity() {
         return BridgeDispatcher(config, if (transports.size == 1) transports.first() else CompositeTransport(transports))
     }
 
-    private fun stopLocalBridgeDelayed() {
-        Handler(Looper.getMainLooper()).postDelayed({
-            localBridgeServer?.stop()
-            localBridgeServer = null
-            localBridgeStore = null
-        }, 5000L)
-    }
-
-    private fun stopLocalBridgeNow() {
-        localBridgeServer?.stop()
-        localBridgeServer = null
-        localBridgeStore = null
-    }
 
     private fun flushFinalOnce(reason: String) {
         if (finalFlushSent.compareAndSet(false, true)) {
