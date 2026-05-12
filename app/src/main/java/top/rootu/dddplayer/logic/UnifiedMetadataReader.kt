@@ -34,9 +34,9 @@ object UnifiedMetadataReader {
         return try {
             when {
                 // MKV Header: 1A 45 DF A3
-//                header.take(4).toByteArray().contentEquals(byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())) -> {
-//                    MatroskaMetadataReader.parse(pushbackStream)
-//                }
+                header.take(4).toByteArray().contentEquals(byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())) -> {
+                    MatroskaMetadataReader.parse(pushbackStream)
+                }
 
                 // MP4 ftyp (обычно с 4-го байта)
                 // ftyp сигнатура: 4 байта размер, 4 байта 'ftyp'
