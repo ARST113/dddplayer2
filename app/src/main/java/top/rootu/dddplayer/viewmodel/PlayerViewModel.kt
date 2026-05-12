@@ -47,6 +47,7 @@ import top.rootu.dddplayer.utils.StereoTypeDetector
 import top.rootu.dddplayer.utils.afr.RuntimeFpsDetector
 import top.rootu.dddplayer.utils.getString
 import androidx.media3.common.MediaItem as Media3MediaItem
+import java.util.concurrent.atomic.AtomicBoolean
 
 // --- Enums & Data Classes ---
 enum class SettingType {
@@ -64,6 +65,40 @@ data class TrackOption(
     val group: Tracks.Group?,
     val trackIndex: Int,
     val isOff: Boolean = false
+)
+
+data class TrackFingerprint(
+    val trackType: Int,
+    val formatId: String?,
+    val language: String?,
+    val label: String?,
+    val normalizedName: String?,
+    val sampleMimeType: String?,
+    val channelCount: Int?,
+    val bitrate: Int?,
+    val ordinal: Int,
+    val trackCount: Int?,
+    val nameFromMeta: String?
+)
+
+enum class TrackRestoreMode { SAFE, SMART, AGGRESSIVE }
+data class TrackMatchResult(val index: Int, val score: Int, val reason: String)
+
+
+data class PlaybackSnapshot(
+    val sessionId: String?,
+    val ts: Long,
+    val uri: String?,
+    val position: Long?,
+    val duration: Long?,
+    val bufferedPosition: Long?,
+    val bufferedPercentage: Int?,
+    val windowIndex: Int?,
+    val playlistSize: Int?,
+    val title: String?,
+    val isPlaying: Boolean?,
+    val playbackState: Int?,
+    val reason: String?
 )
 
 data class VideoQualityOption(
@@ -87,6 +122,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var bridgeConfig: BridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
     private var lastBridgeTickAt = 0L
+
+    @Volatile
+    private var lastKnownSnapshot: PlaybackSnapshot? = null
+    private var lastEventFlushAt = 0L
+    private var lastEventFlushReason: String? = null
+    private var lastEventFlushPosition: Long? = null
+    private var lastEventFlushUri: String? = null
+    private var pendingSeekFromPosition: Long? = null
+    private var pendingSeekReason: String? = null
+    private var previousSnapshotForTransition: PlaybackSnapshot? = null
+    private val finalSessionFinishedSent = AtomicBoolean(false)
+    private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
+    private val EVENT_FLUSH_MIN_POSITION_DELTA_MS = 1_000L
+    private var sessionAudioPreference: TrackFingerprint? = null
+    private val trackRestoreMode: TrackRestoreMode = TrackRestoreMode.SMART
 
     // Делегат для 3D/VR настроек
     val anaglyphDelegate = AnaglyphDelegate(repository)
@@ -272,18 +322,99 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         bufferedPosition = p.bufferedPosition,
                         bufferedPercentage = _bufferedPercentage.value,
                         windowIndex = p.currentMediaItemIndex,
-                        title = p.currentMediaItem?.mediaMetadata?.title?.toString()
+                        title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+                        reason = "tick"
                     )
                 )
                 lastBridgeTickAt = now
+                previousSnapshotForTransition = updateLastKnownSnapshot("tick")
             }
             handler.postDelayed(this, 200)
         }
     }
 
+
+    private fun normalizePosition(position: Long, duration: Long?, playbackState: Int?): Long {
+        val safePosition = if (position < 0) 0L else position
+        if (playbackState == Player.STATE_ENDED && duration != null) return duration
+        return if (duration != null && safePosition > duration) duration else safePosition
+    }
+
+    private fun capturePlaybackSnapshot(reason: String): PlaybackSnapshot {
+        val p = player
+        val fallback = lastKnownSnapshot
+        if (p == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
+            ?: PlaybackSnapshot(bridgeConfig.sessionId, System.currentTimeMillis(), null, null, null, null, null, null, null, null, null, null, reason)
+        val normalizedDuration = normalizeDuration(p.duration)
+        return PlaybackSnapshot(
+            sessionId = bridgeConfig.sessionId,
+            ts = System.currentTimeMillis(),
+            uri = p.currentMediaItem?.localConfiguration?.uri?.toString() ?: fallback?.uri,
+            position = normalizePosition(p.currentPosition, normalizedDuration, p.playbackState),
+            duration = normalizedDuration,
+            bufferedPosition = p.bufferedPosition,
+            bufferedPercentage = _bufferedPercentage.value,
+            windowIndex = p.currentMediaItemIndex,
+            playlistSize = p.mediaItemCount,
+            title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+            isPlaying = p.isPlaying,
+            playbackState = p.playbackState,
+            reason = reason
+        )
+    }
+
+    private fun updateLastKnownSnapshot(reason: String): PlaybackSnapshot {
+        val snapshot = capturePlaybackSnapshot(reason)
+        lastKnownSnapshot = snapshot
+        return snapshot
+    }
+
+    private fun PlaybackSnapshot.toPositionTick(reason: String) = BridgeEvent.PositionTick(
+        sessionId, System.currentTimeMillis(), uri, position, duration, bufferedPosition, bufferedPercentage, windowIndex, title, reason
+    )
+
+    private fun PlaybackSnapshot.toSessionFinished(endBy: String) = BridgeEvent.SessionFinished(
+        sessionId, System.currentTimeMillis(), uri, position, duration, endBy, windowIndex, playlistSize, title
+    )
+
+    private fun PlaybackSnapshot.toError(error: PlaybackException) = BridgeEvent.Error(
+        sessionId, System.currentTimeMillis(), uri, error.errorCodeName, error.errorCode, error.message, windowIndex, position, duration, bufferedPosition, bufferedPercentage, playlistSize, title, true
+    )
+
+    private fun shouldThrottleEventFlush(snapshot: PlaybackSnapshot, reason: String, force: Boolean): Boolean {
+        if (force) return false
+        val hardReasons = setOf("pause","resume","seek","seek_forward","seek_backward","manual_next","manual_previous","playlist_item_changed","ended","background","destroy","user_exit","error")
+        if (reason in hardReasons) return false
+        val now = System.currentTimeMillis()
+        val posDelta = kotlin.math.abs((snapshot.position ?: 0L) - (lastEventFlushPosition ?: 0L))
+        return reason == lastEventFlushReason && snapshot.uri == lastEventFlushUri && (now - lastEventFlushAt) < EVENT_FLUSH_MIN_INTERVAL_MS && posDelta < EVENT_FLUSH_MIN_POSITION_DELTA_MS
+    }
+
+    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false) {
+        if (final && finalSessionFinishedSent.get()) return
+        val snapshot = capturePlaybackSnapshot(reason)
+        if (snapshot.uri == null && snapshot.position == null) return
+        if (shouldThrottleEventFlush(snapshot, reason, force)) return
+        lastKnownSnapshot = snapshot
+        lastEventFlushAt = System.currentTimeMillis()
+        lastEventFlushReason = reason
+        lastEventFlushPosition = snapshot.position
+        lastEventFlushUri = snapshot.uri
+        previousSnapshotForTransition = snapshot
+        saveCurrentSettings()
+        if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(snapshot.toPositionTick(reason))
+        if (final && bridgeConfig.enabled && finalSessionFinishedSent.compareAndSet(false, true)) {
+            bridgeDispatcher?.emit(snapshot.toSessionFinished(reason))
+        }
+        if (includeError != null && bridgeConfig.enabled) bridgeDispatcher?.emit(snapshot.toError(includeError))
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
+            val reason = if (isPlaying) "resume" else "pause"
+            flushProgress(reason, force = true)
+            val snapshot = capturePlaybackSnapshot(reason)
             updateProgressUpdaterState()
             bridgeDispatcher?.emit(
                 BridgeEvent.PlaybackStateChanged(
@@ -292,8 +423,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
                     isPlaying = isPlaying,
                     isBuffering = _isBuffering.value == true,
-                    position = player?.currentPosition,
-                    duration = player?.duration
+                    position = snapshot.position,
+                    duration = snapshot.duration,
+                    reason = reason
                 )
             )
         }
@@ -306,8 +438,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 // После буферизации или старта обновляем инфо
                 player?.videoFormat?.let { updateVideoInfoBadge(it) }
             }
+            if (playbackState == Player.STATE_BUFFERING) flushProgress("buffering")
+            if (playbackState == Player.STATE_READY) flushProgress("state_ready")
             if (playbackState == Player.STATE_ENDED) {
                 _playbackEnded.value = true
+                flushProgress("ended", force = true)
                 val p = player
                 bridgeDispatcher?.emit(
                     BridgeEvent.PlaybackEnded(
@@ -323,6 +458,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
             updateProgressUpdaterState()
+            val stateReason = when (playbackState) {
+                Player.STATE_BUFFERING -> "buffering"
+                Player.STATE_READY -> "state_ready"
+                Player.STATE_ENDED -> "ended"
+                else -> "playback_state_changed"
+            }
+            val snapshot = capturePlaybackSnapshot(stateReason)
             bridgeDispatcher?.emit(
                 BridgeEvent.PlaybackStateChanged(
                     sessionId = bridgeConfig.sessionId,
@@ -330,8 +472,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
                     isPlaying = player?.isPlaying == true,
                     isBuffering = _isBuffering.value == true,
-                    position = player?.currentPosition,
-                    duration = player?.duration
+                    position = snapshot.position,
+                    duration = snapshot.duration,
+                    reason = stateReason
                 )
             )
             _isLive.value = player?.isCurrentMediaItemLive ?: false
@@ -341,21 +484,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (tryRecoverFromError(error)) {
                 return
             }
+            flushProgress(reason = "error", final = true, includeError = error)
             _fatalError.postValue(error)
             _isPlaying.postValue(false)
-            bridgeDispatcher?.emit(
-                BridgeEvent.Error(
-                    sessionId = bridgeConfig.sessionId,
-                    ts = System.currentTimeMillis(),
-                    uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
-                    code = error.errorCodeName,
-                    message = error.message
-                )
-            )
         }
 
         override fun onMediaItemTransition(mediaItem: Media3MediaItem?, reason: Int) {
             ioRetryCount = 0 // Сброс счетчика при смене видео
+            previousSnapshotForTransition?.let {
+                if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
+                    bridgeDispatcher?.emit(it.toPositionTick("before_playlist_item_changed"))
+                }
+            }
             handleMediaItemTransition(mediaItem)
             val p = player
             bridgeDispatcher?.emit(
@@ -373,6 +513,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     hasNext = p?.hasNextMediaItem() == true
                 )
             )
+            flushProgress("playlist_item_changed", force = true)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -393,8 +534,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             reason: Int
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                // При перемотке просто останавливаем текущий процесс детекции, если он был запущен.
                 fpsDetector.stop(player)
+                val delta = newPosition.positionMs - oldPosition.positionMs
+                val flushReason = pendingSeekReason ?: if (delta > 0) "seek_forward" else if (delta < 0) "seek_backward" else "seek"
+                pendingSeekFromPosition = null
+                pendingSeekReason = null
                 bridgeDispatcher?.emit(
                     BridgeEvent.SeekCompleted(
                         sessionId = bridgeConfig.sessionId,
@@ -404,6 +548,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         toPosition = newPosition.positionMs
                     )
                 )
+                flushProgress(flushReason, force = true)
             }
         }
     }
@@ -848,12 +993,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         audioOptions = audio
         // Пытаемся применить отложенную аудиодорожку
         var finalAudioIdx = audioIdx
+        var restoreReason: String? = null
+        var restoreScore: Int? = null
         pendingAudioId?.let { id ->
             val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
             if (foundIdx != -1) {
                 finalAudioIdx = foundIdx
-                selectTrackByIndex(C.TRACK_TYPE_AUDIO, foundIdx)
+                restoreReason = "restore_exact_uri"
             }
+        }
+        if (restoreReason == null) {
+            sessionAudioPreference?.let { pref ->
+                val matched = matchTrackByPreference(audioOptions, pref, trackRestoreMode)
+                if (matched != null) {
+                    finalAudioIdx = matched.index
+                    restoreReason = "restore_session_preference"
+                    restoreScore = matched.score
+                }
+            }
+        }
+        if (restoreReason != null && finalAudioIdx in audioOptions.indices && finalAudioIdx != audioIdx) {
+            selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
         }
         currentAudioIndex = finalAudioIdx
         _currentAudioTrack.postValue(audioOptions.getOrNull(currentAudioIndex))
@@ -893,12 +1053,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun seekForward() = playerManager.seekForward()
     fun seekBack() = playerManager.seekBack()
     fun seekTo(pos: Long) {
-        player?.seekTo(pos)
+        val p = player ?: return
+        val from = p.currentPosition
+        pendingSeekFromPosition = from
+        pendingSeekReason = if (pos > from) "seek_forward" else if (pos < from) "seek_backward" else "seek"
+        p.seekTo(pos)
         _currentPosition.value = pos
     }
     fun togglePlayPause() = playerManager.togglePlayPause()
-    fun nextTrack() { if (player?.hasNextMediaItem() == true) player!!.seekToNextMediaItem() }
-    fun prevTrack() { if (player?.hasPreviousMediaItem() == true) player!!.seekToPreviousMediaItem() }
+    fun nextTrack() {
+        val p = player ?: return
+        if (p.hasNextMediaItem()) { pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true) }
+    }
+    fun prevTrack() {
+        val p = player ?: return
+        if (p.hasPreviousMediaItem()) { pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true) }
+    }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
         _playbackSpeed.value = speed
@@ -1177,7 +1347,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun selectTrackByIndex(trackType: Int, index: Int) {
+    fun selectTrackByIndex(trackType: Int, index: Int, persist: Boolean = true, reason: String = "user_selected", matchScore: Int? = null) {
         val options = if (trackType == C.TRACK_TYPE_AUDIO) audioOptions else subtitleOptions
 
         if (index in options.indices) {
@@ -1186,6 +1356,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (trackType == C.TRACK_TYPE_AUDIO) {
                 currentAudioIndex = index
                 _currentAudioTrack.value = option
+                if (persist) {
+                    saveCurrentSettings()
+                    sessionAudioPreference = option.toFingerprint(trackType)
+                }
+                emitTrackSelectionChanged(option, index, "audio", reason, matchScore)
             } else {
                 currentSubtitleIndex = index
                 _currentSubtitleTrack.value = option
@@ -1210,6 +1385,82 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 p.trackSelectionParameters = builder.build()
             }
         }
+    }
+
+    private fun normalizeTrackName(value: String?): String? {
+        if (value.isNullOrBlank()) return null
+        return value.lowercase()
+            .replace('ё', 'е')
+            .replace(Regex("[^\\p{L}\\p{Nd}\\s]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { null }
+    }
+
+    private fun TrackOption.toFingerprint(trackType: Int): TrackFingerprint = TrackFingerprint(
+        trackType = trackType,
+        formatId = format?.id,
+        language = format?.language,
+        label = format?.label,
+        normalizedName = normalizeTrackName(nameFromMeta ?: format?.label),
+        sampleMimeType = format?.sampleMimeType,
+        channelCount = format?.channelCount?.takeIf { it > 0 },
+        bitrate = format?.bitrate?.takeIf { it > 0 },
+        ordinal = index,
+        trackCount = audioOptions.size,
+        nameFromMeta = nameFromMeta
+    )
+
+    private fun matchTrackByPreference(options: List<TrackOption>, preference: TrackFingerprint, mode: TrackRestoreMode = TrackRestoreMode.SMART): TrackMatchResult? {
+        var bestIdx: Int? = null
+        var bestScore = Int.MIN_VALUE
+        var bestOrdinalOnly = false
+        options.forEachIndexed { i, option ->
+            val fp = option.toFingerprint(preference.trackType)
+            var score = 0
+            if (!preference.formatId.isNullOrBlank() && preference.formatId == fp.formatId) {
+                return TrackMatchResult(i, 100, "exact_format_id")
+            }
+            if (!preference.language.isNullOrBlank() && preference.language == fp.language) score += 35
+            if (!preference.normalizedName.isNullOrBlank() && preference.normalizedName == fp.normalizedName) score += 35
+            if (!preference.sampleMimeType.isNullOrBlank() && preference.sampleMimeType == fp.sampleMimeType) score += 20
+            if (preference.channelCount != null && preference.channelCount == fp.channelCount) score += 15
+            if (preference.bitrate != null && fp.bitrate != null && kotlin.math.abs(preference.bitrate - fp.bitrate) < 64_000) score += 5
+            if (preference.ordinal == fp.ordinal) score += 10
+            if (score > bestScore) { bestScore = score; bestIdx = i; bestOrdinalOnly = (score == 10) }
+        }
+        if (bestIdx == null) return null
+        if (bestScore >= 35) return TrackMatchResult(bestIdx!!, bestScore, "scored_match")
+        if (!bestOrdinalOnly) return null
+        return when (mode) {
+            TrackRestoreMode.SAFE -> null
+            TrackRestoreMode.SMART -> {
+                val sameTrackCount = preference.trackCount != null && preference.trackCount == options.size
+                val noConflicts = preference.language.isNullOrBlank() && preference.normalizedName.isNullOrBlank() && preference.nameFromMeta.isNullOrBlank()
+                if (sameTrackCount && noConflicts) TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_smart") else null
+            }
+            TrackRestoreMode.AGGRESSIVE -> TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_aggressive")
+        }
+    }
+
+    private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
+        if (!bridgeConfig.enabled) return
+        bridgeDispatcher?.emit(
+            BridgeEvent.TrackSelectionChanged(
+                sessionId = bridgeConfig.sessionId,
+                ts = System.currentTimeMillis(),
+                uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
+                trackType = trackType,
+                trackIndex = index,
+                trackId = option.format?.id,
+                language = option.format?.language,
+                label = option.format?.label ?: option.nameFromMeta,
+                sampleMimeType = option.format?.sampleMimeType,
+                channelCount = option.format?.channelCount,
+                reason = reason,
+                matchScore = matchScore
+            )
+        )
     }
 
     // Логика изменения настроек (вызывается из Fragment по команде SettingsViewModel)
