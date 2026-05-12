@@ -267,7 +267,13 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        flushFinalOnce("destroy")
+        if (
+            isFinishing &&
+            !isChangingConfigurations &&
+            !finalFlushSent.get()
+        ) {
+            flushFinalOnce("destroy")
+        }
         super.onDestroy()
     }
 

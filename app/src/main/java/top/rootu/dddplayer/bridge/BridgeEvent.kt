@@ -133,4 +133,19 @@ sealed class BridgeEvent {
         val payload: Map<String, String> = emptyMap(),
         val windowIndex: Int? = null
     ) : BridgeEvent()
+
+    data class TrackSelectionChanged(
+        override val sessionId: String?,
+        override val ts: Long,
+        override val uri: String?,
+        val trackType: String,
+        val trackIndex: Int,
+        val trackId: String?,
+        val language: String?,
+        val label: String?,
+        val sampleMimeType: String?,
+        val channelCount: Int?,
+        val reason: String,
+        val matchScore: Int? = null
+    ) : BridgeEvent()
 }

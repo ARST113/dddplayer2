@@ -27,7 +27,8 @@ class UpdateManager(private val context: Context) {
         val primary = if (channel == UpdateChannel.NIGHTLY) nightlyUrl else latestUrl
         val release = (fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null) ?: return@withContext null
         val tag = release.optString("tag_name")
-        if (currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag) && currentVersionName != "nightly") return@withContext null
+        val isNightly = channel == UpdateChannel.NIGHTLY || tag.equals("nightly", ignoreCase = true)
+        if (!isNightly && currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag)) return@withContext null
         val asset = pickApkAsset(release.optJSONArray("assets") ?: return@withContext null) ?: return@withContext null
         val url = asset.optString("browser_download_url")
         if (!isAllowedUrl(url)) return@withContext null
@@ -50,19 +51,21 @@ class UpdateManager(private val context: Context) {
 
     suspend fun downloadApk(info: UpdateInfo, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         try {
-            val response = client.newCall(Request.Builder().url(info.downloadUrl).build()).execute()
-            val body = response.body
-            val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-            val fileName = info.downloadUrl.substringAfterLast('/').ifBlank { "update.apk" }
-            val file = File(dir, fileName)
-            body.byteStream().use { input -> FileOutputStream(file).use { out ->
-                val totalLength = body.contentLength().takeIf { it > 0 } ?: info.size
-                val data = ByteArray(8192); var count:Int; var total=0L
-                while (input.read(data).also { count = it } != -1) { total += count; out.write(data,0,count); if (totalLength > 0) onProgress(((total*100)/totalLength).toInt()) }
-            }}
-            if (!file.exists() || file.length() <= 0L) return@withContext null
-            if (info.size > 0 && file.length() != info.size) return@withContext null
-            file
+            client.newCall(Request.Builder().url(info.downloadUrl).build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body ?: return@withContext null
+                val dir = File(context.cacheDir, "updates").apply { mkdirs() }
+                val fileName = info.downloadUrl.substringAfterLast('/').ifBlank { "update.apk" }
+                val file = File(dir, fileName)
+                body.byteStream().use { input -> FileOutputStream(file).use { out ->
+                    val totalLength = body.contentLength().takeIf { it > 0 } ?: info.size
+                    val data = ByteArray(8192); var count:Int; var total=0L
+                    while (input.read(data).also { count = it } != -1) { total += count; out.write(data,0,count); if (totalLength > 0) onProgress(((total*100)/totalLength).toInt()) }
+                }}
+                if (!file.exists() || file.length() <= 0L) return@withContext null
+                if (info.size > 0 && file.length() != info.size) return@withContext null
+                file
+            }
         } catch (_: Exception) { null }
     }
 
