@@ -1,20 +1,22 @@
+ 
 <div align="center">
   <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp" width="128" height="128" alt="DDD Player Logo"/>
-  <h1>DDD Video Player</h1>
+
+  <h1>DDD Player 2</h1>
 
   <p>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square" alt="License GPL v3"/>
     </a>
-    <a href="README_RU.md">
-      <img src="https://img.shields.io/badge/Lang-Русский-red.svg?style=flat-square" alt="Читать на русском"/>
+    <a href="README.md">
+      <img src="https://img.shields.io/badge/Lang-English-blue.svg?style=flat-square" alt="Read in English"/>
     </a>
   </p>
 
   <p>
-    <b>Advanced 3D & HDR Video Player for Android TV and Mobile</b>
+    <b>Android-плеер на базе Media3 / ExoPlayer с bridge-интеграцией для Lampa</b>
     <br>
-    <i>Supports Android 6.0 (API 23) and above.</i>
+    <i>Android 6.0 / API 23 и выше</i>
   </p>
 </div>
 
@@ -22,105 +24,110 @@
 
 # DDD Player 2
 
-**DDD Player 2** — Android-видеоплеер на базе Media3 / ExoPlayer с поддержкой внешнего запуска через `Intent.ACTION_VIEW`, плейлистов, субтитров, HTTP-заголовков, возврата результата и bridge-событий через Android Broadcast.
+**DDD Player 2** — внешний Android-видеоплеер на базе **Media3 / ExoPlayer**.
 
-Проект является форком DDD Player и сейчас должен рассматриваться не как отдельный медиасервер и не как каталог, а как внешний плеер для уже подготовленных ссылок на видео. Основной интеграционный сценарий — запуск из Lampa / Lampac / собственного Android-клиента с передачей текущего видео, плейлиста и параметров bridge.
+Плеер запускается через `Intent.ACTION_VIEW`, получает ссылку на видео или плейлист, открывает переданный поток и отдаёт наружу события просмотра.
 
-## Текущий статус
+Основной сценарий — интеграция с **Lampa**, **Lampac**, **TorrServer** или собственным Android-клиентом.
 
-Сейчас в проекте реально есть:
-
-- Android-приложение с `applicationId = top.rootu.dddplayer`;
-- запуск видео через `Intent.ACTION_VIEW`;
-- чтение одиночного видео из `intent.data`;
-- чтение плейлиста из `video_list`;
-- чтение названий, файлов, постеров, субтитров и HTTP-заголовков из extras;
-- чтение стартовой позиции из `position`;
-- возврат позиции через `setResult`, если передан `return_result = true`;
-- bridge-конфигурация через `bridge_*` extras;
-- отправка bridge-событий через Android Broadcast;
-- события позиции, смены элемента плейлиста, окончания, ошибки, перемотки и завершения сессии.
-
-Сейчас в проекте не надо описывать как готовые функции:
-
-- встроенный HTTP-сервер внутри плеера;
-- WebSocket-транспорт;
-- HTTP callback transport;
-- полноценный серверный API управления плеером;
-- прямую запись прогресса в историю Lampa;
-- готовый JavaScript-мост для web-версии Lampa;
-- отдельную новую VR-версию проекта;
-- серверную обработку TorrServer / Lampac внутри самого плеера.
-
-Плеер читает входные параметры, открывает переданные ссылки и отдаёт наружу события. Серверная часть остаётся на стороне Lampac, TorrServer или другого источника.
-
-## Общая схема работы
+DDD Player 2 не ищет фильмы, не хранит каталог и не заменяет Lampac / TorrServer. Он работает как исполнительный слой:
 
 ```text
-Lampac / TorrServer / другой сервер
+получил ссылку → открыл видео → воспроизвёл → отдал события просмотра
+````
+
+---
+
+# Главная идея
+
+DDD Player 2 состоит из двух основных частей:
+
+1. **Плеер** — открывает видео через ExoPlayer.
+2. **Bridge** — отдаёт внешнему клиенту состояние просмотра.
+
+Bridge может работать через:
+
+* Android Broadcast;
+* локальный HTTP-сервер внутри самого плеера;
+* оба транспорта одновременно.
+
+Для web-версии Lampa важен именно локальный сервер. Плеер сам поднимает сервер на `127.0.0.1`, а плагин Lampa забирает оттуда состояние и события.
+
+---
+
+# Архитектура
+
+Общая схема работы:
+
+```text
+Lampac / TorrServer / другой backend
         ↓
-готовая ссылка или набор ссылок на видео
+готовая ссылка или список ссылок
         ↓
-Lampa / Android-клиент / интеграционный слой
+Lampa / JS-плагин / Android-клиент
         ↓
-Intent ACTION_VIEW + extras
+Intent ACTION_VIEW + extras или URI fragment
         ↓
 DDD Player 2
         ↓
+IntentUtils
+        ↓
+PlayerActivity
+        ↓
+PlayerViewModel
+        ↓
 Media3 / ExoPlayer
         ↓
-Bridge events через Android Broadcast
+BridgeDispatcher
         ↓
-BroadcastReceiver / companion bridge / интеграционный слой Lampa
+BroadcastTransport / LocalStoreTransport / CompositeTransport
+        ↓
+Android Broadcast или LocalBridgeStore
+        ↓
+LocalBridgeServer на 127.0.0.1
+        ↓
+плагин Lampa читает /state или /events
+        ↓
+Lampa сохраняет прогресс, серию и историю
 ```
 
-DDD Player 2 не должен сам искать фильмы, работать как TorrServer, хранить каталог или принимать решения о том, как Lampa должна сохранять историю. Его задача — воспроизвести то, что ему передали, и вернуть фактическое состояние просмотра.
+---
 
-## Работа с серверными ссылками
+# Что делает DDD Player 2
 
-Плеер может открывать `http://` и `https://` ссылки, если они переданы как `intent.data` или элементы `video_list`.
+Плеер умеет:
 
-Типовой серверный сценарий:
+* запускаться через `Intent.ACTION_VIEW`;
+* читать одиночное видео из `intent.data`;
+* читать плейлист из `video_list`;
+* принимать названия, имена файлов, постеры, субтитры и HTTP-заголовки через extras;
+* начинать просмотр с позиции `position`;
+* возвращать финальную позицию через `setResult`, если передан `return_result = true`;
+* включать bridge через `bridge_*` extras;
+* включать bridge через URI fragment-параметры `ddd_*`;
+* отправлять bridge-события через Android Broadcast;
+* сохранять bridge-события во внутренний `LocalBridgeStore`;
+* поднимать локальный HTTP-сервер;
+* отдавать состояние и события через `/ping`, `/state`, `/events`;
+* передавать события play / pause, буферизации, позиции, перемотки, смены серии, завершения и ошибки.
 
-1. Lampac, TorrServer или другой backend формирует прямую ссылку на поток.
-2. Lampa или внешний Android-клиент передаёт эту ссылку в DDD Player 2.
-3. Плеер открывает ссылку через ExoPlayer.
-4. Если нужны HTTP-заголовки, они передаются через extra `headers`.
-5. Если включён bridge, плеер отправляет события наружу.
-
-Пример с заголовками:
-
-```kotlin
-val intent = Intent(Intent.ACTION_VIEW)
-intent.setDataAndType(
-    Uri.parse("https://example.com/video.m3u8"),
-    "video/*"
-)
-
-intent.putExtra("title", "Example stream")
-intent.putExtra(
-    "headers",
-    arrayOf(
-        "User-Agent", "DDDPlayer2",
-        "Referer", "https://example.com/"
-    )
-)
-
-startActivity(intent)
-```
-
-`headers` читается как плоский массив строк в формате:
+`applicationId`:
 
 ```text
-["Key1", "Value1", "Key2", "Value2"]
+top.rootu.dddplayer
 ```
 
-## Одиночное видео
+---
+Важно: локальный HTTP-сервер в DDD Player 2 — это не сервер видео. Он не раздаёт фильмы и не проксирует поток. Он нужен только для bridge-состояния и событий просмотра.
+---
 
-Минимальный запуск:
+# Запуск видео
+
+Минимальный запуск одиночного видео:
 
 ```kotlin
 val intent = Intent(Intent.ACTION_VIEW)
+
 intent.setDataAndType(
     Uri.parse("https://example.com/video.mp4"),
     "video/*"
@@ -135,21 +142,64 @@ startActivity(intent)
 
 Поддерживаемые extras для одиночного видео:
 
-| Extra | Тип | Назначение |
-|---|---|---|
-| `title` | `String` | Название видео в интерфейсе |
-| `android.intent.extra.TITLE` | `String` | Альтернативный источник названия |
-| `filename` | `String` | Резервное имя файла |
-| `thumbnail` | `String` | URL постера или превью |
-| `position` | `Int` / `Long` / `String` | Стартовая позиция в миллисекундах |
-| `headers` | `String[]` | HTTP-заголовки для запроса |
-| `return_result` | `Boolean` | Вернуть позицию при закрытии плеера |
+| Extra                        | Тип                       | Назначение                          |
+| ---------------------------- | ------------------------- | ----------------------------------- |
+| `title`                      | `String`                  | Название видео                      |
+| `android.intent.extra.TITLE` | `String`                  | Альтернативное поле названия        |
+| `filename`                   | `String`                  | Резервное имя файла                 |
+| `thumbnail`                  | `String`                  | URL постера или превью              |
+| `position`                   | `Int` / `Long` / `String` | Стартовая позиция в миллисекундах   |
+| `headers`                    | `String[]`                | HTTP-заголовки                      |
+| `return_result`              | `Boolean`                 | Вернуть позицию при закрытии плеера |
 
-Для постера сейчас используется `thumbnail`. Extra `poster` в текущем парсере одиночного видео не является основным documented-полем.
+Для постера используется `thumbnail`.
 
-## Плейлист
+---
 
-Плейлист передаётся через `video_list`.
+# HTTP-заголовки
+
+Заголовки передаются через extra `headers`.
+
+Формат — плоский массив строк:
+
+```text
+["Key1", "Value1", "Key2", "Value2"]
+```
+
+Пример:
+
+```kotlin
+val intent = Intent(Intent.ACTION_VIEW)
+
+intent.setDataAndType(
+    Uri.parse("https://example.com/video.m3u8"),
+    "video/*"
+)
+
+intent.putExtra("title", "Example stream")
+
+intent.putExtra(
+    "headers",
+    arrayOf(
+        "User-Agent", "DDDPlayer2",
+        "Referer", "https://example.com/"
+    )
+)
+
+startActivity(intent)
+```
+
+Заголовки применяются к сетевым запросам ExoPlayer.
+
+Для плейлиста `headers` сейчас являются общими для элементов списка.
+
+---
+
+# Плейлист
+
+Плейлист передаётся через extra `video_list`.
+
+Пример:
 
 ```kotlin
 val videoUris = arrayOf(
@@ -170,42 +220,75 @@ val thumbnails = arrayOf(
     "https://example.com/s01e03.jpg"
 )
 
-val startUri = videoUris[1]
+val startIndex = 1
+val startUri = videoUris[startIndex]
 
 val intent = Intent(Intent.ACTION_VIEW)
+
 intent.setDataAndType(startUri, "video/*")
+
 intent.putExtra("video_list", videoUris)
 intent.putExtra("video_list.name", titles)
 intent.putExtra("video_list.thumbnail", thumbnails)
-intent.putExtra("start_index", 1)
+intent.putExtra("start_index", startIndex)
 intent.putExtra("position", 300_000L)
 
 startActivity(intent)
 ```
 
-Важный текущий нюанс: для плейлиста `position` применяется к тому элементу, URI которого совпадает с `intent.data`. Поэтому при запуске сериала лучше одновременно передавать:
-
-- `intent.data` как URI стартовой серии;
-- `video_list` со всеми сериями;
-- `start_index` с индексом стартовой серии;
-- `position` со стартовой позицией.
-
 Поддерживаемые extras для плейлиста:
 
-| Extra | Тип | Назначение |
-|---|---|---|
-| `video_list` | `Parcelable[]` / `ArrayList` / строки URI | Список видео |
-| `video_list.name` | `String[]` / `ArrayList<String>` | Названия элементов |
-| `video_list.filename` | `String[]` / `ArrayList<String>` | Имена файлов |
-| `video_list.thumbnail` | `String[]` / `ArrayList<String>` | Постеры элементов |
-| `video_list.subtitles` | `ArrayList<Bundle>` | Субтитры для каждого элемента |
-| `start_index` | `Int` | Индекс стартового элемента |
-| `position` | `Int` / `Long` / `String` | Позиция стартового элемента, если он совпал с `intent.data` |
-| `headers` | `String[]` | HTTP-заголовки, общие для элементов плейлиста |
+| Extra                  | Тип                                       | Назначение                       |
+| ---------------------- | ----------------------------------------- | -------------------------------- |
+| `video_list`           | `Parcelable[]` / `ArrayList` / строки URI | Список видео                     |
+| `video_list.name`      | `String[]` / `ArrayList<String>`          | Названия элементов               |
+| `video_list.filename`  | `String[]` / `ArrayList<String>`          | Имена файлов                     |
+| `video_list.thumbnail` | `String[]` / `ArrayList<String>`          | Постеры элементов                |
+| `video_list.subtitles` | `ArrayList<Bundle>`                       | Субтитры для элементов плейлиста |
+| `start_index`          | `Int`                                     | Индекс стартового элемента       |
+| `position`             | `Int` / `Long` / `String`                 | Стартовая позиция                |
+| `headers`              | `String[]`                                | Общие HTTP-заголовки             |
 
-## Субтитры
+Для сериалов желательно всегда передавать:
 
-Для одиночного видео:
+* полный `video_list`;
+* корректный `start_index`;
+* `intent.data`, совпадающий со стартовой серией;
+* `position` для стартовой серии;
+* понятные `video_list.name`;
+* стабильный `bridge_session_id`.
+
+---
+
+# Важный нюанс по `position`
+
+Для плейлиста стартовая позиция применяется к элементу, URI которого совпадает с `intent.data`.
+
+Практически это значит:
+
+```text
+intent.data должен указывать на ту же серию, к которой относится position
+```
+
+Рекомендуемый запуск серии:
+
+```kotlin
+val startIndex = 1
+val startUri = videoUris[startIndex]
+
+intent.setDataAndType(startUri, "video/*")
+intent.putExtra("video_list", videoUris)
+intent.putExtra("start_index", startIndex)
+intent.putExtra("position", 180_000L)
+```
+
+Если bridge-параметры передаются через URI fragment, нужно учитывать, что fragment удаляется перед передачей URI в ExoPlayer. Для плейлистов надёжнее передавать bridge-параметры через extras, а не добавлять fragment к URI элемента плейлиста.
+
+---
+
+# Субтитры
+
+## Субтитры для одиночного видео
 
 ```kotlin
 val subUris = arrayOf(
@@ -221,21 +304,25 @@ intent.putExtra("subs.name", subNames)
 
 Поддерживаемые extras:
 
-| Extra | Тип | Назначение |
-|---|---|---|
-| `subs` | `Parcelable[]` / URI strings | Ссылки на субтитры |
-| `subs.name` | `String[]` | Отображаемые названия субтитров |
-| `subs.filename` | `String[]` | Имена файлов субтитров |
+| Extra           | Тип                          | Назначение             |
+| --------------- | ---------------------------- | ---------------------- |
+| `subs`          | `Parcelable[]` / URI strings | Ссылки на субтитры     |
+| `subs.name`     | `String[]`                   | Названия дорожек       |
+| `subs.filename` | `String[]`                   | Имена файлов субтитров |
 
-Для плейлиста используется `video_list.subtitles`. Это `ArrayList<Bundle>`, где каждый `Bundle` соответствует элементу плейлиста с тем же индексом.
+## Субтитры для плейлиста
 
-Структура `Bundle` для субтитров элемента плейлиста:
+Для плейлиста используется `video_list.subtitles`.
 
-| Ключ внутри Bundle | Тип | Назначение |
-|---|---|---|
-| `uris` | `Parcelable[]` / URI strings | Ссылки на субтитры |
-| `names` | `String[]` | Названия дорожек |
-| `uris.filename` | `String[]` | Имена файлов, если нужны |
+Это `ArrayList<Bundle>`, где каждый `Bundle` соответствует элементу плейлиста с тем же индексом.
+
+Структура `Bundle`:
+
+| Ключ            | Тип                          | Назначение             |
+| --------------- | ---------------------------- | ---------------------- |
+| `uris`          | `Parcelable[]` / URI strings | Ссылки на субтитры     |
+| `names`         | `String[]`                   | Названия дорожек       |
+| `uris.filename` | `String[]`                   | Имена файлов субтитров |
 
 Пример:
 
@@ -257,10 +344,13 @@ val subs2 = Bundle().apply {
 }
 
 val subtitles = arrayListOf(subs1, subs2)
+
 intent.putParcelableArrayListExtra("video_list.subtitles", subtitles)
 ```
 
-## Возврат результата через `setResult`
+---
+
+# Возврат результата через `setResult`
 
 Если передать:
 
@@ -268,47 +358,106 @@ intent.putParcelableArrayListExtra("video_list.subtitles", subtitles)
 intent.putExtra("return_result", true)
 ```
 
-то при закрытии плеера будет вызван `setResult(RESULT_OK, resultIntent)`.
+то при закрытии плеера будет вызван:
+
+```kotlin
+setResult(RESULT_OK, resultIntent)
+```
 
 Возвращаемые данные:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `resultIntent.data` | `Uri` | URI текущего видео |
-| `position` | `Long?` | Текущая позиция |
-| `duration` | `Long?` | Длительность |
-| `end_by` | `String` | Причина завершения |
+| Поле                | Тип      | Назначение                    |
+| ------------------- | -------- | ----------------------------- |
+| `resultIntent.data` | `Uri`    | URI текущего видео            |
+| `position`          | `Long?`  | Текущая или финальная позиция |
+| `duration`          | `Long?`  | Длительность                  |
+| `end_by`            | `String` | Причина завершения            |
 
 Значения `end_by`:
 
-| Значение | Смысл |
-|---|---|
-| `user` | Пользователь закрыл плеер |
-| `completion` | Видео завершилось само |
+| Значение     | Смысл                     |
+| ------------ | ------------------------- |
+| `user`       | Пользователь закрыл плеер |
+| `completion` | Видео завершилось само    |
 
-Этот механизм полезен для простых интеграций, но для сериалов и регулярного обновления позиции лучше использовать bridge-события.
+`setResult` подходит для простых Android-интеграций.
 
-## Bridge
+Для Lampa, сериалов и регулярной синхронизации прогресса лучше использовать bridge.
 
-Bridge — это текущий слой обратной связи от DDD Player 2 к внешнему клиенту.
+---
 
-Сейчас реализован один транспорт:
+# Bridge
 
-```text
-Android Broadcast
-```
+Bridge — слой обратной связи от DDD Player 2 к внешнему клиенту.
 
-Режимы HTTP и WebSocket в текущем коде не реализованы, поэтому их не нужно указывать в README как готовые возможности.
+Через bridge плеер сообщает:
 
-### Включение bridge
+* старт сессии;
+* play / pause;
+* буферизацию;
+* текущую позицию;
+* перемотку;
+* смену элемента плейлиста;
+* окончание видео;
+* закрытие плеера;
+* ошибку воспроизведения.
+
+Bridge-события формируются в `PlayerViewModel` и отправляются через `BridgeDispatcher`.
+
+Дальше событие уходит в один из транспортов:
+
+| Транспорт             | Назначение                                       |
+| --------------------- | ------------------------------------------------ |
+| `BroadcastTransport`  | Отправляет событие через Android Broadcast       |
+| `LocalStoreTransport` | Кладёт событие во внутренний `LocalBridgeStore`  |
+| `CompositeTransport`  | Отправляет событие сразу в несколько транспортов |
+
+---
+
+# Режимы bridge
+
+Поддерживаемые режимы:
+
+| Режим       | Что делает                                                                     |
+| ----------- | ------------------------------------------------------------------------------ |
+| `broadcast` | Отправляет события через Android Broadcast                                     |
+| `local`     | Сохраняет события в `LocalBridgeStore` и отдаёт их через локальный HTTP-сервер |
+| `both`      | Одновременно использует Broadcast и локальный store                            |
+
+Рекомендуемые режимы:
+
+| Сценарий                | Режим       |
+| ----------------------- | ----------- |
+| Нативный Android-клиент | `broadcast` |
+| Web-Lampa / JS-плагин   | `local`     |
+| Нужны оба канала сразу  | `both`      |
+
+---
+
+# Включение bridge через extras
+
+Пример режима `local`:
 
 ```kotlin
 intent.putExtra("bridge_enabled", true)
 intent.putExtra("bridge_session_id", "lampa-session-001")
 intent.putExtra("bridge_client", "lampa")
-intent.putExtra("bridge_mode", "broadcast")
+intent.putExtra("bridge_mode", "local")
 intent.putExtra("bridge_emit_position", true)
 intent.putExtra("bridge_emit_user_actions", true)
+intent.putExtra("bridge_position_interval_ms", 1000L)
+intent.putExtra("bridge_schema_version", 1)
+intent.putExtra("bridge_local_token", "secret-token")
+```
+
+Пример режима `both`:
+
+```kotlin
+intent.putExtra("bridge_enabled", true)
+intent.putExtra("bridge_session_id", "lampa-session-001")
+intent.putExtra("bridge_client", "lampa")
+intent.putExtra("bridge_mode", "both")
+intent.putExtra("bridge_emit_position", true)
 intent.putExtra("bridge_position_interval_ms", 1000L)
 intent.putExtra("bridge_event_action", "top.rootu.dddplayer.bridge.EVENT")
 intent.putExtra("bridge_schema_version", 1)
@@ -316,38 +465,168 @@ intent.putExtra("bridge_schema_version", 1)
 
 Поддерживаемые bridge extras:
 
-| Extra | Тип | Значение по умолчанию | Назначение |
-|---|---|---|---|
-| `bridge_enabled` | `Boolean` | `false` | Включить отправку bridge-событий |
-| `bridge_session_id` | `String` | `null` | ID текущей сессии просмотра |
-| `bridge_mode` | `String` | `broadcast` | Сейчас поддерживается только `broadcast` |
-| `bridge_emit_position` | `Boolean` | `true` | Отправлять периодические события позиции |
-| `bridge_emit_user_actions` | `Boolean` | `true` | Флаг для пользовательских действий |
-| `bridge_position_interval_ms` | `Long` | `1000` | Интервал отправки позиции; минимум принудительно ограничен `250` мс |
-| `bridge_client` | `String` | `lampa` | Имя клиента |
-| `bridge_event_action` | `String` | `top.rootu.dddplayer.bridge.EVENT` | Broadcast action |
-| `bridge_receiver_package` | `String` | `null` | Package получателя, если broadcast надо ограничить конкретным приложением |
-| `bridge_schema_version` | `Int` | `1` | Версия схемы события |
+| Extra                         | Тип       | По умолчанию                       | Назначение                                                 |
+| ----------------------------- | --------- | ---------------------------------- | ---------------------------------------------------------- |
+| `bridge_enabled`              | `Boolean` | `false`                            | Включить bridge                                            |
+| `bridge_session_id`           | `String`  | `null`                             | ID текущей сессии                                          |
+| `bridge_mode`                 | `String`  | `broadcast`                        | `broadcast`, `local` или `both`                            |
+| `bridge_emit_position`        | `Boolean` | `true`                             | Отправлять периодические события позиции                   |
+| `bridge_emit_user_actions`    | `Boolean` | `true`                             | Отправлять пользовательские действия, если они реализованы |
+| `bridge_position_interval_ms` | `Long`    | `1000`                             | Интервал отправки позиции                                  |
+| `bridge_client`               | `String`  | `lampa`                            | Имя клиента                                                |
+| `bridge_event_action`         | `String`  | `top.rootu.dddplayer.bridge.EVENT` | Action для Broadcast                                       |
+| `bridge_receiver_package`     | `String`  | `null`                             | Ограничить Broadcast конкретным package                    |
+| `bridge_schema_version`       | `Int`     | `1`                                | Версия схемы события                                       |
+| `bridge_local_token`          | `String`  | `null`                             | Токен для локального HTTP-сервера                          |
 
-### Broadcast action
+Минимальный интервал `bridge_position_interval_ms` ограничивается значением `250` мс.
 
-По умолчанию события отправляются с action:
+---
+
+# Включение bridge через URI fragment
+
+Bridge можно включить через fragment-параметры в URI.
+
+Это удобно для web-интеграций, где проще сформировать одну ссылку.
+
+Пример:
 
 ```text
-top.rootu.dddplayer.bridge.EVENT
+https://example.com/video.m3u8#ddd_mode=local&ddd_sid=lampa-session-001&ddd_port=39677&ddd_token=secret-token&ddd_client=lampa
 ```
 
-Broadcast содержит extras:
+Поддерживаемые fragment-параметры:
 
-| Extra | Тип | Назначение |
-|---|---|---|
-| `schema` | `Int` | Версия схемы |
-| `client` | `String` | Клиент, указанный в `bridge_client` |
-| `session_id` | `String?` | ID сессии |
-| `event_type` | `String` | Тип события |
-| `event_json` | `String` | JSON-обёртка события |
+| Параметр     | Назначение                                 |
+| ------------ | ------------------------------------------ |
+| `ddd_mode`   | Режим bridge: `broadcast`, `local`, `both` |
+| `ddd_sid`    | ID сессии                                  |
+| `ddd_port`   | Порт локального HTTP-сервера               |
+| `ddd_token`  | Токен доступа к локальному серверу         |
+| `ddd_client` | Имя клиента                                |
 
-Формат `event_json`:
+Если в URI есть `ddd_mode`, `ddd_sid`, `ddd_port` или `ddd_token`, bridge считается включённым автоматически.
+
+Fragment используется только для настройки bridge. Перед передачей ссылки в ExoPlayer fragment удаляется.
+
+---
+
+# Локальный HTTP-сервер
+
+В режимах `local` и `both` DDD Player 2 сам запускает локальный HTTP-сервер.
+
+По умолчанию:
+
+```text
+http://127.0.0.1:39677
+```
+
+Сервер слушает только `127.0.0.1`.
+
+Он предназначен для локальной связи между плеером и плагином Lampa.
+
+Локальный сервер:
+
+* не раздаёт видео;
+* не проксирует поток;
+* не заменяет Lampac;
+* не заменяет TorrServer;
+* не хранит долговременную историю;
+* отдаёт только bridge-состояние и события.
+
+---
+
+# Endpoints локального сервера
+
+## `/ping`
+
+Проверяет, что сервер запущен.
+
+```text
+GET http://127.0.0.1:39677/ping
+```
+
+Пример ответа:
+
+```json
+{
+  "ok": true,
+  "service": "dddplayer-local-bridge"
+}
+```
+
+## `/state`
+
+Возвращает последнее состояние указанной сессии.
+
+```text
+GET http://127.0.0.1:39677/state?sid=lampa-session-001
+```
+
+Если задан токен:
+
+```text
+GET http://127.0.0.1:39677/state?sid=lampa-session-001&token=secret-token
+```
+
+## `/events`
+
+Возвращает список последних событий указанной сессии.
+
+```text
+GET http://127.0.0.1:39677/events?sid=lampa-session-001
+```
+
+Если задан токен:
+
+```text
+GET http://127.0.0.1:39677/events?sid=lampa-session-001&token=secret-token
+```
+
+---
+
+# Авторизация локального сервера
+
+Если `bridge_local_token` или `ddd_token` не задан, endpoints `/state` и `/events` доступны без токена.
+
+Если токен задан, его нужно передавать в query-параметре:
+
+```text
+token=secret-token
+```
+
+Без правильного токена сервер вернёт:
+
+```json
+{
+  "error": "forbidden"
+}
+```
+
+---
+
+# Хранение событий
+
+В режиме `local` события кладутся во внутренний `LocalBridgeStore`.
+
+Хранилище работает по `session_id`.
+
+Для каждой сессии хранится:
+
+* последнее состояние;
+* список последних событий.
+
+Список событий ограничен последними 200 событиями.
+
+Это оперативное in-memory-хранилище. Оно нужно для связи с плагином, а не для долговременного хранения истории.
+
+Историю просмотра должна сохранять Lampa, плагин, Lampac или другой внешний слой.
+
+---
+
+# JSON-обёртка события
+
+Каждое bridge-событие упаковано в envelope:
 
 ```json
 {
@@ -370,160 +649,287 @@ Broadcast содержит extras:
 }
 ```
 
-## Bridge-события
+Поля envelope:
 
-### `SessionStarted`
+| Поле        | Тип       | Назначение                               |
+| ----------- | --------- | ---------------------------------------- |
+| `schema`    | `Int`     | Версия схемы                             |
+| `type`      | `String`  | Тип события                              |
+| `client`    | `String`  | Клиент из `bridge_client` / `ddd_client` |
+| `sessionId` | `String?` | ID сессии                                |
+| `ts`        | `Long`    | Время события                            |
+| `payload`   | `Object`  | Данные события                           |
+
+---
+
+# Android Broadcast
+
+В режиме `broadcast` событие отправляется через Android Broadcast.
+
+Action по умолчанию:
+
+```text
+top.rootu.dddplayer.bridge.EVENT
+```
+
+Broadcast extras:
+
+| Extra        | Тип       | Назначение           |
+| ------------ | --------- | -------------------- |
+| `schema`     | `Int`     | Версия схемы         |
+| `client`     | `String`  | Имя клиента          |
+| `session_id` | `String?` | ID сессии            |
+| `event_type` | `String`  | Тип события          |
+| `event_json` | `String`  | Полный JSON envelope |
+
+Пример чтения:
+
+```kotlin
+val eventType = intent.getStringExtra("event_type")
+val eventJson = intent.getStringExtra("event_json")
+val sessionId = intent.getStringExtra("session_id")
+```
+
+---
+
+# Bridge-события
+
+## `SessionStarted`
 
 Отправляется после загрузки непустого плейлиста.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `sessionId` | `String?` | ID сессии |
-| `ts` | `Long` | Время события |
-| `uri` | `String?` | URI текущего элемента |
-| `title` | `String?` | Название |
-| `playlistSize` | `Int` | Размер плейлиста |
-| `startIndex` | `Int` | Стартовый индекс |
-| `startPosition` | `Long?` | Стартовая позиция, если больше нуля |
-| `currentItem` | `BridgeMediaItem?` | Текущий элемент |
+| Поле            | Тип                | Назначение            |
+| --------------- | ------------------ | --------------------- |
+| `sessionId`     | `String?`          | ID сессии             |
+| `ts`            | `Long`             | Время события         |
+| `uri`           | `String?`          | URI текущего элемента |
+| `title`         | `String?`          | Название              |
+| `playlistSize`  | `Int`              | Размер плейлиста      |
+| `startIndex`    | `Int`              | Стартовый индекс      |
+| `startPosition` | `Long?`            | Стартовая позиция     |
+| `currentItem`   | `BridgeMediaItem?` | Текущий элемент       |
 
-Сейчас `currentItem` при старте заполняется базовыми полями `uri`, `title`, `filename`.
+---
 
-### `PlaybackStateChanged`
+## `PlaybackStateChanged`
 
 Отправляется при изменении состояния воспроизведения.
 
-Поля payload:
+Это событие покрывает:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `isPlaying` | `Boolean` | Идёт ли воспроизведение |
-| `isBuffering` | `Boolean` | Идёт ли буферизация |
-| `position` | `Long?` | Текущая позиция |
-| `duration` | `Long?` | Длительность |
-| `windowIndex` | `Int?` | Индекс элемента плейлиста |
-| `title` | `String?` | Название |
+* старт воспроизведения;
+* паузу;
+* продолжение после паузы;
+* буферизацию;
+* выход из буферизации;
+* изменение `isPlaying`.
 
-### `PositionTick`
+При паузе приходит событие с:
 
-Периодическое событие позиции. Отправляется, если включён `bridge_emit_position`.
+```json
+{
+  "type": "PlaybackStateChanged",
+  "payload": {
+    "isPlaying": false
+  }
+}
+```
 
-Поля payload:
+При продолжении воспроизведения приходит событие с:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `position` | `Long?` | Текущая позиция |
-| `duration` | `Long?` | Длительность |
-| `bufferedPosition` | `Long?` | Позиция буфера |
-| `bufferedPercentage` | `Int?` | Расчётный процент буфера |
-| `windowIndex` | `Int?` | Индекс элемента плейлиста |
-| `title` | `String?` | Название текущего элемента |
+```json
+{
+  "type": "PlaybackStateChanged",
+  "payload": {
+    "isPlaying": true
+  }
+}
+```
 
-Для интеграции с Lampa это основное событие для регулярной синхронизации прогресса.
+Payload:
 
-### `SeekCompleted`
+| Поле          | Тип       | Назначение                 |
+| ------------- | --------- | -------------------------- |
+| `isPlaying`   | `Boolean` | Идёт ли воспроизведение    |
+| `isBuffering` | `Boolean` | Идёт ли буферизация        |
+| `position`    | `Long?`   | Текущая позиция            |
+| `duration`    | `Long?`   | Длительность               |
+| `windowIndex` | `Int?`    | Индекс элемента плейлиста  |
+| `title`       | `String?` | Название текущего элемента |
+
+Для истории просмотра это важное событие. Принимающий слой может сохранять позицию сразу при паузе, не дожидаясь следующего `PositionTick`.
+
+---
+
+## `PositionTick`
+
+Периодическое событие позиции.
+
+Отправляется, если включено:
+
+```text
+bridge_emit_position = true
+```
+
+Payload:
+
+| Поле                 | Тип       | Назначение                 |
+| -------------------- | --------- | -------------------------- |
+| `position`           | `Long?`   | Текущая позиция            |
+| `duration`           | `Long?`   | Длительность               |
+| `bufferedPosition`   | `Long?`   | Позиция буфера             |
+| `bufferedPercentage` | `Int?`    | Процент буфера             |
+| `windowIndex`        | `Int?`    | Индекс элемента плейлиста  |
+| `title`              | `String?` | Название текущего элемента |
+
+`PositionTick` используется для регулярной синхронизации прогресса.
+
+---
+
+## `SeekCompleted`
 
 Отправляется после перемотки.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `fromPosition` | `Long?` | Позиция до перемотки |
-| `toPosition` | `Long?` | Позиция после перемотки |
-| `windowIndex` | `Int?` | Индекс элемента плейлиста |
+| Поле           | Тип     | Назначение                |
+| -------------- | ------- | ------------------------- |
+| `fromPosition` | `Long?` | Позиция до перемотки      |
+| `toPosition`   | `Long?` | Позиция после перемотки   |
+| `windowIndex`  | `Int?`  | Индекс элемента плейлиста |
 
-### `PlaylistItemChanged`
+---
+
+## `PlaylistItemChanged`
 
 Отправляется при смене элемента плейлиста.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `uri` | `String?` | URI нового элемента |
-| `windowIndex` | `Int` | Индекс нового элемента |
-| `playlistSize` | `Int` | Размер плейлиста |
-| `title` | `String?` | Название нового элемента |
-| `reason` | `String` | Причина перехода |
-| `position` | `Long?` | Текущая позиция |
-| `duration` | `Long?` | Длительность |
-| `hasPrevious` | `Boolean` | Есть ли предыдущий элемент |
-| `hasNext` | `Boolean` | Есть ли следующий элемент |
-| `currentItem` | `BridgeMediaItem?` | В модели есть поле, но в текущей отправке события оно может быть `null` |
+| Поле           | Тип                | Назначение                     |
+| -------------- | ------------------ | ------------------------------ |
+| `uri`          | `String?`          | URI нового элемента            |
+| `windowIndex`  | `Int`              | Индекс нового элемента         |
+| `playlistSize` | `Int`              | Размер плейлиста               |
+| `title`        | `String?`          | Название нового элемента       |
+| `reason`       | `String`           | Причина перехода               |
+| `position`     | `Long?`            | Текущая позиция                |
+| `duration`     | `Long?`            | Длительность                   |
+| `hasPrevious`  | `Boolean`          | Есть ли предыдущий элемент     |
+| `hasNext`      | `Boolean`          | Есть ли следующий элемент      |
+| `currentItem`  | `BridgeMediaItem?` | Текущий элемент, если заполнен |
 
-Это главное событие для сериалов. По нему внешний слой может понять, что пользователь перешёл на другую серию внутри плеера.
+Это главное событие для сериалов. По нему плагин понимает, что пользователь перешёл на другую серию внутри плеера.
 
-### `PlaybackEnded`
+---
+
+## `PlaybackEnded`
 
 Отправляется при достижении конца текущего элемента.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `windowIndex` | `Int` | Индекс элемента |
-| `playlistSize` | `Int` | Размер плейлиста |
-| `title` | `String?` | Название |
-| `position` | `Long?` | Финальная позиция |
-| `duration` | `Long?` | Длительность |
+| Поле           | Тип       | Назначение        |
+| -------------- | --------- | ----------------- |
+| `windowIndex`  | `Int`     | Индекс элемента   |
+| `playlistSize` | `Int`     | Размер плейлиста  |
+| `title`        | `String?` | Название          |
+| `position`     | `Long?`   | Финальная позиция |
+| `duration`     | `Long?`   | Длительность      |
 
-### `SessionFinished`
+---
+
+## `SessionFinished`
 
 Отправляется при закрытии `PlayerActivity`.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `uri` | `String?` | URI текущего элемента |
-| `position` | `Long?` | Финальная позиция |
-| `duration` | `Long?` | Длительность |
-| `endBy` | `String` | Причина завершения |
-| `windowIndex` | `Int?` | Индекс элемента |
-| `playlistSize` | `Int?` | Размер плейлиста |
-| `title` | `String?` | Название |
+| Поле           | Тип       | Назначение            |
+| -------------- | --------- | --------------------- |
+| `uri`          | `String?` | URI текущего элемента |
+| `position`     | `Long?`   | Финальная позиция     |
+| `duration`     | `Long?`   | Длительность          |
+| `endBy`        | `String`  | Причина завершения    |
+| `windowIndex`  | `Int?`    | Индекс элемента       |
+| `playlistSize` | `Int?`    | Размер плейлиста      |
+| `title`        | `String?` | Название              |
 
-### `Error`
+Возможные значения `endBy`:
+
+| Значение     | Смысл                     |
+| ------------ | ------------------------- |
+| `user`       | Пользователь закрыл плеер |
+| `completion` | Видео завершилось само    |
+
+После закрытия плеера локальный сервер не останавливается мгновенно. Он остаётся доступен короткое время, чтобы плагин успел забрать финальное состояние.
+
+---
+
+## `Error`
 
 Отправляется при ошибке воспроизведения, если ошибка не была восстановлена автоматически.
 
-Поля payload:
+Payload:
 
-| Поле | Тип | Назначение |
-|---|---|---|
-| `code` | `String?` | Код ошибки ExoPlayer |
-| `message` | `String?` | Сообщение ошибки |
-| `windowIndex` | `Int?` | Индекс элемента |
+| Поле          | Тип       | Назначение           |
+| ------------- | --------- | -------------------- |
+| `code`        | `String?` | Код ошибки ExoPlayer |
+| `message`     | `String?` | Сообщение ошибки     |
+| `windowIndex` | `Int?`    | Индекс элемента      |
 
-### `UserAction`
+---
 
-Модель события есть в коде, но текущая документация не должна описывать конкретные пользовательские действия как готовый API, пока они явно не отправляются в нужных местах интерфейса.
+## `UserAction`
 
-## Интеграция с Lampa / Lampac
+Модель события есть в коде.
 
-Правильное разделение ответственности:
+Документировать конкретные пользовательские действия как публичный API нужно только после того, как они будут стабильно отправляться из интерфейса.
 
-| Компонент | Ответственность |
-|---|---|
-| Lampac / TorrServer / сервер | Подготовить ссылку или набор ссылок на видео |
-| Lampa / интеграционный плагин | Выбрать карточку, серию, источник, позицию, собрать Intent |
-| DDD Player 2 | Прочитать Intent, воспроизвести видео, отправить события |
-| BroadcastReceiver / bridge-приёмник | Получить события и передать их туда, где хранится прогресс |
+---
 
-Для сериалов Lampa-плагину желательно передавать:
+# Как плагину Lampa обрабатывать события
 
-- полный `video_list`;
-- корректный `start_index`;
-- `intent.data`, совпадающий с URI стартовой серии;
-- `position` для стартовой серии;
-- понятные `video_list.name`;
-- `bridge_session_id`;
-- `bridge_enabled = true`.
+Плагин должен:
 
-Минимальный пример запуска серии с bridge:
+1. Получить ссылку или плейлист от Lampa / Lampac / TorrServer.
+2. Сформировать Intent для DDD Player 2.
+3. Передать `bridge_session_id`.
+4. Включить bridge в режиме `local` или `both`.
+5. Запустить плеер.
+6. Читать `/state` или `/events` с локального сервера.
+7. Обновлять прогресс, активную серию и историю просмотра.
+
+Пример чтения событий:
+
+```text
+GET http://127.0.0.1:39677/events?sid=lampa-card-123-s01e02
+```
+
+Пример чтения последнего состояния:
+
+```text
+GET http://127.0.0.1:39677/state?sid=lampa-card-123-s01e02
+```
+
+Рекомендуемая логика обработки:
+
+| Событие                | Что делать плагину                                    |
+| ---------------------- | ----------------------------------------------------- |
+| `SessionStarted`       | Создать или обновить активную сессию                  |
+| `PlaybackStateChanged` | Обновить play/pause/buffering и сохранить позицию     |
+| `PositionTick`         | Регулярно обновлять прогресс                          |
+| `SeekCompleted`        | Сохранить новую позицию после перемотки               |
+| `PlaylistItemChanged`  | Переключить активную серию по `windowIndex` или `uri` |
+| `PlaybackEnded`        | Отметить серию или видео как завершённые              |
+| `SessionFinished`      | Финально сохранить состояние просмотра                |
+| `Error`                | Показать ошибку или сохранить диагностику             |
+
+---
+
+# Пример запуска серии с локальным bridge
 
 ```kotlin
 val videoUris = arrayOf(
@@ -540,7 +946,9 @@ val startIndex = 1
 val startUri = videoUris[startIndex]
 
 val intent = Intent(Intent.ACTION_VIEW)
+
 intent.setDataAndType(startUri, "video/*")
+
 intent.putExtra("video_list", videoUris)
 intent.putExtra("video_list.name", titles)
 intent.putExtra("start_index", startIndex)
@@ -549,61 +957,179 @@ intent.putExtra("position", 180_000L)
 intent.putExtra("bridge_enabled", true)
 intent.putExtra("bridge_session_id", "lampa-card-123-s01e02")
 intent.putExtra("bridge_client", "lampa")
-intent.putExtra("bridge_mode", "broadcast")
+intent.putExtra("bridge_mode", "local")
 intent.putExtra("bridge_emit_position", true)
 intent.putExtra("bridge_position_interval_ms", 1000L)
-intent.putExtra("bridge_event_action", "top.rootu.dddplayer.bridge.EVENT")
 intent.putExtra("bridge_schema_version", 1)
 
 startActivity(intent)
 ```
 
-## Что должен делать принимающий слой
-
-Принимающий слой должен зарегистрировать `BroadcastReceiver` на action:
+После запуска плагин может читать:
 
 ```text
-top.rootu.dddplayer.bridge.EVENT
+http://127.0.0.1:39677/state?sid=lampa-card-123-s01e02
 ```
 
-Дальше он должен читать:
+и:
 
-```kotlin
-val eventType = intent.getStringExtra("event_type")
-val eventJson = intent.getStringExtra("event_json")
-val sessionId = intent.getStringExtra("session_id")
+```text
+http://127.0.0.1:39677/events?sid=lampa-card-123-s01e02
 ```
 
-Рекомендуемая логика обработки:
+---
 
-| Событие | Что делать принимающему слою |
-|---|---|
-| `SessionStarted` | Создать или обновить активную сессию просмотра |
-| `PositionTick` | Обновить текущую позицию |
-| `SeekCompleted` | Зафиксировать перемотку и новую позицию |
-| `PlaylistItemChanged` | Переключить активную серию по `windowIndex` / `uri` |
-| `PlaybackEnded` | Отметить элемент как досмотренный или близкий к досмотру |
-| `SessionFinished` | Финально сохранить состояние |
-| `Error` | Показать диагностику или сохранить ошибку |
+# Сопоставление серий
 
-Если Lampa работает как web-приложение, ей может понадобиться отдельный native-companion или Android-слой, который примет broadcast и уже потом передаст данные в JS. Такой слой не является частью текущего репозитория DDD Player 2.
+Сейчас bridge отдаёт:
 
-## Сопоставление серий
+* `uri`;
+* `windowIndex`;
+* `title`.
 
-Текущий bridge уже отдаёт `uri`, `windowIndex` и `title`. Этого достаточно для базового сопоставления, если плейлист стабилен.
+Этого достаточно для базового сопоставления, если плейлист стабилен.
 
-Для более надёжного сопоставления в будущем лучше передавать и сохранять внешние идентификаторы серии, сезона, карточки и источника. В модели `BridgeMediaItem` такие поля есть:
+Рекомендуемая стратегия:
 
-| Поле | Назначение |
-|---|---|
+| Поле          | Как использовать                             |
+| ------------- | -------------------------------------------- |
+| `sessionId`   | Привязка к карточке / сезону / серии в Lampa |
+| `windowIndex` | Индекс серии внутри переданного плейлиста    |
+| `uri`         | Проверка фактического элемента               |
+| `title`       | Отладка и отображение                        |
+
+Для более надёжного сопоставления в будущем можно использовать внешние идентификаторы:
+
+| Поле         | Назначение          |
+| ------------ | ------------------- |
 | `externalId` | Внешний ID элемента |
-| `season` | Номер сезона |
-| `episode` | Номер серии |
-| `source` | Источник |
+| `season`     | Номер сезона        |
+| `episode`    | Номер серии         |
+| `source`     | Источник            |
 
-Но текущий Intent-парсер не читает отдельные extras для `externalId`, `season`, `episode` и `source`, поэтому в README нельзя описывать их как уже готовую интеграцию.
+Эти поля есть в модели `BridgeMediaItem`, но если Intent-парсер их ещё не принимает как отдельные extras, не стоит описывать их как стабильный публичный API.
 
-## Сборка
+---
+
+# Рекомендуемый `session_id`
+
+`bridge_session_id` должен быть стабильным для конкретного просмотра.
+
+Для фильма:
+
+```text
+lampa:movie:{card_id}:{source_id}
+```
+
+Для серии:
+
+```text
+lampa:series:{card_id}:s{season}:e{episode}:{source_id}
+```
+
+Пример:
+
+```text
+lampa:series:12345:s1:e2:lampac
+```
+
+Главное требование — плагин должен знать, какой `session_id` он передал, чтобы потом читать:
+
+```text
+/state?sid=...
+/events?sid=...
+```
+
+---
+
+# Диагностика
+
+Проверить запуск локального сервера:
+
+```text
+http://127.0.0.1:39677/ping
+```
+
+Проверить события:
+
+```text
+http://127.0.0.1:39677/events?sid=YOUR_SESSION_ID
+```
+
+Проверить последнее состояние:
+
+```text
+http://127.0.0.1:39677/state?sid=YOUR_SESSION_ID
+```
+
+Смотреть логи:
+
+```bash
+adb logcat | grep -i DDDPlayer
+```
+
+Для bridge полезно проверять:
+
+1. Передан ли `bridge_enabled = true`.
+2. Правильно ли указан `bridge_mode`.
+3. Есть ли стабильный `bridge_session_id`.
+4. Совпадает ли `sid` в запросе `/state` или `/events`.
+5. Не требуется ли `token`.
+6. Совпадает ли порт из `ddd_port` с тем, куда обращается плагин.
+7. Не конфликтует ли порт `39677` с другим процессом.
+8. Передаётся ли `intent.data`.
+9. Для плейлиста передан ли корректный `start_index`.
+10. Для плейлиста совпадает ли стартовая серия с `intent.data`.
+
+---
+
+# Проверка через adb
+
+Одиночное видео с Broadcast bridge:
+
+```bash
+adb shell am start \
+  -a android.intent.action.VIEW \
+  -d "https://example.com/video.mp4" \
+  -t "video/*" \
+  --es title "Test video" \
+  --el position 120000 \
+  --ez bridge_enabled true \
+  --es bridge_session_id "adb-test-session" \
+  --es bridge_client "lampa" \
+  --es bridge_mode "broadcast" \
+  --ez bridge_emit_position true \
+  --el bridge_position_interval_ms 1000
+```
+
+Одиночное видео с local bridge через URI fragment:
+
+```bash
+adb shell am start \
+  -a android.intent.action.VIEW \
+  -d "https://example.com/video.mp4#ddd_mode=local&ddd_sid=adb-local-session&ddd_port=39677&ddd_client=lampa" \
+  -t "video/*" \
+  --es title "Test local bridge" \
+  --el position 120000
+```
+
+После запуска проверить:
+
+```bash
+adb shell "curl http://127.0.0.1:39677/ping"
+```
+
+и:
+
+```bash
+adb shell "curl http://127.0.0.1:39677/events?sid=adb-local-session"
+```
+
+Если на устройстве нет `curl`, endpoint можно проверять из самого плагина Lampa или через другой доступный HTTP-клиент на устройстве.
+
+---
+
+# Сборка
 
 Debug-сборка:
 
@@ -623,50 +1149,32 @@ Release-сборка:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Проверка запуска через adb:
+---
 
-```bash
-adb shell am start \
-  -a android.intent.action.VIEW \
-  -d "https://example.com/video.mp4" \
-  -t "video/*" \
-  --es title "Test video" \
-  --el position 120000 \
-  --ez bridge_enabled true \
-  --es bridge_session_id "adb-test-session" \
-  --es bridge_client "lampa" \
-  --es bridge_mode "broadcast" \
-  --ez bridge_emit_position true \
-  --el bridge_position_interval_ms 1000
+# Границы ответственности
+
+| Компонент                     | Ответственность                                               |
+| ----------------------------- | ------------------------------------------------------------- |
+| Lampac / TorrServer / backend | Подготовить прямую ссылку или список ссылок                   |
+| Lampa / JS-плагин             | Выбрать контент, источник, серию, позицию и запустить плеер   |
+| DDD Player 2                  | Принять Intent, воспроизвести видео, отправить bridge-события |
+| LocalBridgeServer             | Отдать состояние и события плагину через localhost            |
+| Lampa / плагин / backend      | Сохранить историю просмотра                                   |
+
+DDD Player 2 не решает, как именно Lampa должна хранить историю. Он отдаёт фактические события просмотра. Внешний слой принимает решение, что считать просмотренным, куда сохранять позицию и как сопоставлять серии.
+
+---
+
+# License
+
+GPL-3.0.
+
+Подробности см. в файле [LICENSE](LICENSE).
+
 ```
 
-## Диагностика
-
-Смотреть события и ошибки можно через logcat:
-
-```bash
-adb logcat | grep -i DDDPlayer
+Главная правка по смыслу: **локальный сервер — часть плеера**, а не внешний companion. Внешний слой здесь только плагин Lampa, который запускает плеер и читает `/state` / `/events` с `127.0.0.1`.
+::contentReference[oaicite:1]{index=1}
 ```
 
-Для bridge дополнительно проверять:
-
-1. Передан ли `bridge_enabled = true`.
-2. Совпадает ли `bridge_event_action` у отправителя и получателя.
-3. Не указан ли ошибочный `bridge_receiver_package`.
-4. Зарегистрирован ли `BroadcastReceiver` у принимающего слоя.
-5. Передаётся ли стабильный `bridge_session_id`.
-6. Передаётся ли `intent.data` при запуске плейлиста с позиции.
-7. Совпадает ли `start_index` с фактической стартовой серией.
-
-## Ключевая идея текущей версии
-
-```text
-DDD Player 2 — это внешний Android-плеер, который читает Intent, воспроизводит переданные серверные ссылки и отправляет фактические события просмотра через Android Broadcast.
-```
-
-Он не заменяет Lampac, TorrServer или Lampa. Он должен быть аккуратным исполнительным слоем между серверной ссылкой и системой, которая хранит историю просмотра.
-
-## License
-
-GPL-3.0. Подробности см. в файле `LICENSE`.
-See the [LICENSE](LICENSE) file for details.
+[1]: https://github.com/ARST113/dddplayer2 "GitHub - ARST113/dddplayer2: Try full js · GitHub"
