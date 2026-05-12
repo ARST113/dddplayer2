@@ -2,150 +2,77 @@ package top.rootu.dddplayer.logic
 
 import android.content.Context
 import android.content.Intent
-import android.os.Environment
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 
-data class UpdateInfo(
-    val version: String,
-    val description: String,
-    val downloadUrl: String,
-    val size: Long
-)
+enum class UpdateChannel { STABLE, NIGHTLY, DISABLED }
+
+data class UpdateInfo(val version: String, val description: String, val downloadUrl: String, val size: Long, val publishedAt: String? = null)
 
 class UpdateManager(private val context: Context) {
-
     private val client = OkHttpClient()
-    private val repoUrl = "https://api.github.com/repos/usmanec/dddplayer/releases"
+    private val latestUrl = "https://api.github.com/repos/ARST113/dddplayer2/releases/latest"
+    private val nightlyUrl = "https://api.github.com/repos/ARST113/dddplayer2/releases/tags/nightly"
 
-    suspend fun checkForUpdates(currentVersionName: String?): UpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkForUpdates(currentVersionName: String?, channel: UpdateChannel): UpdateInfo? = withContext(Dispatchers.IO) {
+        if (channel == UpdateChannel.DISABLED) return@withContext null
+        val primary = if (channel == UpdateChannel.NIGHTLY) nightlyUrl else latestUrl
+        val release = (fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null) ?: return@withContext null
+        val tag = release.optString("tag_name")
+        if (currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag) && currentVersionName != "nightly") return@withContext null
+        val asset = pickApkAsset(release.optJSONArray("assets") ?: return@withContext null) ?: return@withContext null
+        val url = asset.optString("browser_download_url")
+        if (!isAllowedUrl(url)) return@withContext null
+        UpdateInfo(tag, release.optString("body", ""), url, asset.optLong("size", 0), release.optString("published_at"))
+    }
+
+    private fun fetchRelease(url: String): JSONObject? = try { client.newCall(Request.Builder().url(url).build()).execute().use { if (!it.isSuccessful) null else JSONObject(it.body.string()) } } catch (_: Exception) { null }
+    private fun pickApkAsset(assets: org.json.JSONArray): JSONObject? {
+        val list = (0 until assets.length()).map { assets.getJSONObject(it) }.filter { it.optString("name").endsWith(".apk") }
+        return list.firstOrNull { it.optString("name") == "app-release.apk" }
+            ?: list.firstOrNull { it.optString("name") == "dddplayer2-release.apk" }
+            ?: list.firstOrNull { !it.optString("name").contains("debug", true) }
+            ?: list.firstOrNull()
+    }
+    private fun isAllowedUrl(url: String): Boolean {
+        val uri = Uri.parse(url)
+        val host = uri.host ?: return false
+        return uri.scheme == "https" && (host == "github.com" || host == "objects.githubusercontent.com" || host == "api.github.com")
+    }
+
+    suspend fun downloadApk(info: UpdateInfo, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().url(repoUrl).build()
-            val response = client.newCall(request).execute()
-            val json = response.body.string()
-
-            val releases = JSONArray(json)
-            if (releases.length() > 0) {
-                val latest = releases.getJSONObject(0)
-                val tagName = latest.getString("tag_name") // e.g. "v1.0.1"
-
-                // Сравниваем версии (простая проверка на неравенство, можно усложнить)
-                // Убираем 'v' если есть
-                val cleanTag = tagName.removePrefix("v")
-                val cleanCurrent = currentVersionName?.removePrefix("v")
-
-                if (cleanTag != cleanCurrent) {
-                    val assets = latest.getJSONArray("assets")
-                    if (assets.length() > 0) {
-                        val apkAsset = assets.getJSONObject(0) // Берем первый ассет (обычно APK)
-                        // Лучше поискать по имени .apk
-                        var downloadUrl = apkAsset.getString("browser_download_url")
-                        var size = apkAsset.getLong("size")
-
-                        for (i in 0 until assets.length()) {
-                            val asset = assets.getJSONObject(i)
-                            if (asset.getString("name").endsWith(".apk")) {
-                                downloadUrl = asset.getString("browser_download_url")
-                                size = asset.getLong("size")
-                                break
-                            }
-                        }
-
-                        return@withContext UpdateInfo(
-                            version = tagName,
-                            description = latest.optString("body", "").ifEmpty { "Список изменений не предоставлен." },
-                            downloadUrl = downloadUrl,
-                            size = size
-                        )
-                    }
-                }
+            client.newCall(Request.Builder().url(info.downloadUrl).build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body ?: return@withContext null
+                val dir = File(context.cacheDir, "updates").apply { mkdirs() }
+                val fileName = info.downloadUrl.substringAfterLast('/').ifBlank { "update.apk" }
+                val file = File(dir, fileName)
+                body.byteStream().use { input -> FileOutputStream(file).use { out ->
+                    val totalLength = body.contentLength().takeIf { it > 0 } ?: info.size
+                    val data = ByteArray(8192); var count:Int; var total=0L
+                    while (input.read(data).also { count = it } != -1) { total += count; out.write(data,0,count); if (totalLength > 0) onProgress(((total*100)/totalLength).toInt()) }
+                }}
+                if (!file.exists() || file.length() <= 0L) return@withContext null
+                if (info.size > 0 && file.length() != info.size) return@withContext null
+                file
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return@withContext null
-    }
-
-    suspend fun downloadApk(url: String, onProgress: (Int) -> Unit): File? = withContext(Dispatchers.IO) {
-        try {
-            val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            val body = response.body
-
-            val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "update.apk")
-            val inputStream = body.byteStream()
-            val outputStream = FileOutputStream(file)
-            val totalLength = body.contentLength()
-
-            val data = ByteArray(4096)
-            var count: Int
-            var total: Long = 0
-
-            while (inputStream.read(data).also { count = it } != -1) {
-                total += count
-                outputStream.write(data, 0, count)
-                if (totalLength > 0) {
-                    onProgress(((total * 100) / totalLength).toInt())
-                }
-            }
-
-            outputStream.flush()
-            outputStream.close()
-            inputStream.close()
-
-            return@withContext file
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext null
-        }
-    }
-
-    fun installApk(file: File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-    }
-
-    fun deleteUpdateFile() {
-        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "update.apk")
-        if (file.exists()) {
-            file.delete()
-        }
-    }
-
-    fun toJson(info: UpdateInfo): String {
-        val json = JSONObject()
-        json.put("version", info.version)
-        json.put("description", info.description)
-        json.put("downloadUrl", info.downloadUrl)
-        json.put("size", info.size)
-        return json.toString()
-    }
-
-    fun fromJson(jsonStr: String): UpdateInfo? {
-        return try {
-            val json = JSONObject(jsonStr)
-            UpdateInfo(
-                json.getString("version"),
-                json.getString("description"),
-                json.getString("downloadUrl"),
-                json.getLong("size")
-            )
         } catch (_: Exception) { null }
     }
 
-    fun isNewer(remote: String, current: String): Boolean {
-        return remote.removePrefix("v") != current.removePrefix("v")
+    fun installApk(file: File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, "application/vnd.android.package-archive"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        try { context.startActivity(intent) } catch (_: Exception) {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
     }
 }
