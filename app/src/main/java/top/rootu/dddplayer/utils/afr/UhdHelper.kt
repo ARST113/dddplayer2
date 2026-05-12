@@ -14,6 +14,7 @@ import android.util.Log
 import android.view.Display
 import android.view.Window
 import android.view.WindowManager
+import androidx.core.content.ContextCompat
 import top.rootu.dddplayer.utils.afr.DisplayHolder.Mode
 import java.lang.reflect.Field
 import java.util.concurrent.atomic.AtomicBoolean
@@ -197,11 +198,12 @@ class UhdHelper(private val mContext: Context) {
         mIsSetModeInProgress.set(true)
         mWorkHandler.setExpectedMode(modeId)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            mContext.registerReceiver(overlayStateChangeReceiver, IntentFilter(MODESWITCH_OVERLAY_STATE_CHANGED), Context.RECEIVER_EXPORTED)
-        } else {
-            mContext.registerReceiver(overlayStateChangeReceiver, IntentFilter(MODESWITCH_OVERLAY_STATE_CHANGED))
-        }
+        ContextCompat.registerReceiver(
+            mContext,
+            overlayStateChangeReceiver,
+            IntentFilter(MODESWITCH_OVERLAY_STATE_CHANGED),
+            ContextCompat.RECEIVER_EXPORTED
+        )
 
         mDisplayListener = object : DisplayManager.DisplayListener {
             override fun onDisplayAdded(displayId: Int) {}

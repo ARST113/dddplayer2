@@ -12,15 +12,8 @@ class BroadcastTransport(
     private val gson = Gson()
 
     override fun send(event: BridgeEvent) {
-        val type = event::class.simpleName ?: "Unknown"
-        val envelope = BridgeEnvelope(
-            schema = config.schemaVersion,
-            type = type,
-            client = config.client,
-            sessionId = event.sessionId,
-            ts = event.ts,
-            payload = event
-        )
+        val type = event.typeName()
+        val envelope = BridgeEnvelope.from(config, event)
 
         val intent = Intent(config.eventAction)
         config.receiverPackage?.takeIf { it.isNotBlank() }?.let { intent.setPackage(it) }
