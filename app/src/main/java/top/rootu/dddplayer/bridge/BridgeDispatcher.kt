@@ -9,7 +9,7 @@ class BridgeDispatcher(
     fun emit(event: BridgeEvent) {
         if (!config.enabled) return
         try {
-            transport.send(event)
+            transport.send(BridgeEnvelope.from(config, event))
         } catch (e: Exception) {
             Log.w("DDDPlayerBridge", "Failed to send bridge event: ${event::class.simpleName}", e)
         }
