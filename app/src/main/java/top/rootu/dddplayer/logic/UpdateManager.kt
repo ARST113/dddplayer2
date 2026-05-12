@@ -27,7 +27,8 @@ class UpdateManager(private val context: Context) {
         val primary = if (channel == UpdateChannel.NIGHTLY) nightlyUrl else latestUrl
         val release = (fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null) ?: return@withContext null
         val tag = release.optString("tag_name")
-        if (currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag) && currentVersionName != "nightly") return@withContext null
+        val isNightly = channel == UpdateChannel.NIGHTLY || tag.equals("nightly", ignoreCase = true)
+        if (!isNightly && currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag)) return@withContext null
         val asset = pickApkAsset(release.optJSONArray("assets") ?: return@withContext null) ?: return@withContext null
         val url = asset.optString("browser_download_url")
         if (!isAllowedUrl(url)) return@withContext null

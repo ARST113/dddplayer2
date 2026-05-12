@@ -1015,6 +1015,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (restoreReason != null && finalAudioIdx in audioOptions.indices && finalAudioIdx != audioIdx) {
             selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
+        } else if (restoreReason == "restore_exact_uri" && finalAudioIdx in audioOptions.indices && finalAudioIdx == audioIdx) {
+            emitTrackSelectionChanged(audioOptions[finalAudioIdx], finalAudioIdx, "audio", "restore_exact_uri", restoreScore)
         }
         currentAudioIndex = finalAudioIdx
         _currentAudioTrack.postValue(audioOptions.getOrNull(currentAudioIndex))
