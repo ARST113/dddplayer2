@@ -67,6 +67,22 @@ data class TrackOption(
     val isOff: Boolean = false
 )
 
+data class TrackFingerprint(
+    val trackType: Int,
+    val formatId: String?,
+    val language: String?,
+    val label: String?,
+    val normalizedName: String?,
+    val sampleMimeType: String?,
+    val channelCount: Int?,
+    val bitrate: Int?,
+    val ordinal: Int,
+    val trackCount: Int?,
+    val nameFromMeta: String?
+)
+
+enum class TrackRestoreMode { SAFE, SMART, AGGRESSIVE }
+data class TrackMatchResult(val index: Int, val score: Int, val reason: String)
 
 
 data class PlaybackSnapshot(
@@ -119,6 +135,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val finalSessionFinishedSent = AtomicBoolean(false)
     private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
     private val EVENT_FLUSH_MIN_POSITION_DELTA_MS = 1_000L
+    private var sessionAudioPreference: TrackFingerprint? = null
+    private val trackRestoreMode: TrackRestoreMode = TrackRestoreMode.SMART
 
     // Делегат для 3D/VR настроек
     val anaglyphDelegate = AnaglyphDelegate(repository)
@@ -975,12 +993,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         audioOptions = audio
         // Пытаемся применить отложенную аудиодорожку
         var finalAudioIdx = audioIdx
+        var restoreReason: String? = null
+        var restoreScore: Int? = null
         pendingAudioId?.let { id ->
             val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
             if (foundIdx != -1) {
                 finalAudioIdx = foundIdx
-                selectTrackByIndex(C.TRACK_TYPE_AUDIO, foundIdx)
+                restoreReason = "restore_exact_uri"
+                restoreScore = 100
             }
+        }
+        if (restoreReason == null) {
+            sessionAudioPreference?.let { pref ->
+                val matched = matchTrackByPreference(audioOptions, pref, trackRestoreMode)
+                if (matched != null) {
+                    finalAudioIdx = matched.index
+                    restoreReason = "restore_session_preference"
+                    restoreScore = matched.score
+                }
+            }
+        }
+        if (restoreReason != null && finalAudioIdx in audioOptions.indices && finalAudioIdx != audioIdx) {
+            selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
         }
         currentAudioIndex = finalAudioIdx
         _currentAudioTrack.postValue(audioOptions.getOrNull(currentAudioIndex))
@@ -1314,7 +1348,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun selectTrackByIndex(trackType: Int, index: Int) {
+    fun selectTrackByIndex(trackType: Int, index: Int, persist: Boolean = true, reason: String = "user_selected", matchScore: Int? = null) {
         val options = if (trackType == C.TRACK_TYPE_AUDIO) audioOptions else subtitleOptions
 
         if (index in options.indices) {
@@ -1323,6 +1357,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (trackType == C.TRACK_TYPE_AUDIO) {
                 currentAudioIndex = index
                 _currentAudioTrack.value = option
+                if (persist) {
+                    saveCurrentSettings()
+                    sessionAudioPreference = option.toFingerprint(trackType)
+                }
+                emitTrackSelectionChanged(option, index, "audio", reason, matchScore)
             } else {
                 currentSubtitleIndex = index
                 _currentSubtitleTrack.value = option
@@ -1347,6 +1386,97 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 p.trackSelectionParameters = builder.build()
             }
         }
+    }
+
+    private fun normalizeTrackName(value: String?): String? {
+        if (value.isNullOrBlank()) return null
+        return value.lowercase()
+            .replace('ё', 'е')
+            .replace(Regex("[^\\p{L}\\p{Nd}\\s]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { null }
+    }
+
+    private fun TrackOption.toFingerprint(trackType: Int): TrackFingerprint = TrackFingerprint(
+        trackType = trackType,
+        formatId = format?.id,
+        language = format?.language,
+        label = format?.label,
+        normalizedName = normalizeTrackName(nameFromMeta ?: format?.label),
+        sampleMimeType = format?.sampleMimeType,
+        channelCount = format?.channelCount?.takeIf { it > 0 },
+        bitrate = format?.bitrate?.takeIf { it > 0 },
+        ordinal = index,
+        trackCount = audioOptions.size,
+        nameFromMeta = nameFromMeta
+    )
+
+    private fun matchTrackByPreference(options: List<TrackOption>, preference: TrackFingerprint, mode: TrackRestoreMode = TrackRestoreMode.SMART): TrackMatchResult? {
+        var bestIdx: Int? = null
+        var bestScore = Int.MIN_VALUE
+        var bestOrdinalOnly = false
+        options.forEachIndexed { i, option ->
+            val fp = option.toFingerprint(preference.trackType)
+            var score = 0
+            if (!preference.formatId.isNullOrBlank() && preference.formatId == fp.formatId) {
+                return TrackMatchResult(i, 100, "exact_format_id")
+            }
+            if (!preference.language.isNullOrBlank() && preference.language == fp.language) score += 35
+            if (!preference.normalizedName.isNullOrBlank() && !fp.normalizedName.isNullOrBlank()) {
+                when {
+                    preference.normalizedName == fp.normalizedName -> score += 50
+                    fp.normalizedName.contains(preference.normalizedName) -> score += 35
+                    preference.normalizedName.contains(fp.normalizedName) -> score += 25
+                }
+            }
+            if (!preference.sampleMimeType.isNullOrBlank() && preference.sampleMimeType == fp.sampleMimeType) score += 20
+            if (preference.channelCount != null && preference.channelCount == fp.channelCount) score += 15
+            if (preference.bitrate != null && fp.bitrate != null && kotlin.math.abs(preference.bitrate - fp.bitrate) < 64_000) score += 5
+            if (preference.ordinal == fp.ordinal) score += 10
+            if (score > bestScore) { bestScore = score; bestIdx = i; bestOrdinalOnly = (score == 10) }
+        }
+        if (bestIdx == null) return null
+        if (bestScore >= 35) {
+            val languageOnly = bestScore == 35 &&
+                !preference.language.isNullOrBlank() &&
+                preference.normalizedName.isNullOrBlank() &&
+                preference.sampleMimeType.isNullOrBlank() &&
+                preference.channelCount == null
+            val sameLanguageCount = options.count { it.format?.language == preference.language }
+            if (mode == TrackRestoreMode.SMART && languageOnly && sameLanguageCount > 1) return null
+            return TrackMatchResult(bestIdx!!, bestScore, "scored_match")
+        }
+        if (!bestOrdinalOnly) return null
+        return when (mode) {
+            TrackRestoreMode.SAFE -> null
+            TrackRestoreMode.SMART -> {
+                val sameTrackCount = preference.trackCount != null && preference.trackCount == options.size
+                val noConflicts = preference.language.isNullOrBlank() && preference.normalizedName.isNullOrBlank() && preference.nameFromMeta.isNullOrBlank()
+                if (sameTrackCount && noConflicts) TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_smart") else null
+            }
+            TrackRestoreMode.AGGRESSIVE -> TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_aggressive")
+        }
+    }
+
+    private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
+        if (!bridgeConfig.enabled) return
+        bridgeDispatcher?.emit(
+            BridgeEvent.TrackSelectionChanged(
+                sessionId = bridgeConfig.sessionId,
+                ts = System.currentTimeMillis(),
+                uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
+                trackType = trackType,
+                trackIndex = index,
+                trackId = option.format?.id,
+                language = option.format?.language,
+                label = option.nameFromMeta ?: option.format?.label,
+                sampleMimeType = option.format?.sampleMimeType,
+                channelCount = option.format?.channelCount,
+                reason = reason,
+                matchScore = matchScore
+            )
+        )
     }
 
     // Логика изменения настроек (вызывается из Fragment по команде SettingsViewModel)
