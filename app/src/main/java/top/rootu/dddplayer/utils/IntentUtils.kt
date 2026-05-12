@@ -42,27 +42,38 @@ object IntentUtils {
     }
 
     fun parseBridgeConfig(intent: Intent): BridgeConfig {
-        val mode = when (intent.getStringExtra("bridge_mode")?.lowercase()) {
-            "broadcast" -> BridgeMode.BROADCAST
+        val data = intent.data
+        val fragmentParams = data?.fragment?.split("&")?.mapNotNull {
+            val p = it.split("=", limit = 2)
+            if (p.isEmpty()) null else p[0] to p.getOrElse(1) { "" }
+        }?.toMap().orEmpty()
+        val extrasMode = intent.getStringExtra("bridge_mode")
+        val modeValue = fragmentParams["ddd_mode"] ?: extrasMode
+        val mode = when (modeValue?.lowercase()) {
+            "local" -> BridgeMode.LOCAL
+            "both" -> BridgeMode.BOTH
             else -> BridgeMode.BROADCAST
         }
+        val hasFragmentBridge = listOf("ddd_mode","ddd_sid","ddd_port","ddd_token","ddd_client").any { fragmentParams.containsKey(it) }
 
         return BridgeConfig(
-            enabled = intent.getBooleanExtra("bridge_enabled", false),
-            sessionId = intent.getStringExtra("bridge_session_id"),
+            enabled = intent.getBooleanExtra("bridge_enabled", false) || hasFragmentBridge,
+            sessionId = fragmentParams["ddd_sid"] ?: intent.getStringExtra("bridge_session_id"),
             mode = mode,
             emitPosition = intent.getBooleanExtra("bridge_emit_position", true),
             emitUserActions = intent.getBooleanExtra("bridge_emit_user_actions", true),
             positionIntervalMs = intent.getLongExtra("bridge_position_interval_ms", 1000L).coerceAtLeast(250L),
-            client = intent.getStringExtra("bridge_client") ?: "lampa",
+            client = fragmentParams["ddd_client"] ?: intent.getStringExtra("bridge_client") ?: "lampa",
             eventAction = intent.getStringExtra("bridge_event_action") ?: "top.rootu.dddplayer.bridge.EVENT",
             receiverPackage = intent.getStringExtra("bridge_receiver_package"),
-            schemaVersion = intent.getIntExtra("bridge_schema_version", 1)
+            schemaVersion = intent.getIntExtra("bridge_schema_version", 1),
+            localPort = (fragmentParams["ddd_port"]?.toIntOrNull() ?: intent.getIntExtra("bridge_local_port", 39677)).coerceIn(1024, 65535),
+            localToken = fragmentParams["ddd_token"] ?: intent.getStringExtra("bridge_local_token")
         )
     }
 
     private fun parseSingleFile(context: Context, intent: Intent): Pair<List<MediaItem>, Int> {
-        val uri = intent.data ?: return Pair(emptyList(), 0)
+        val uri = intent.data?.buildUpon()?.fragment(null)?.build() ?: return Pair(emptyList(), 0)
         val extras = intent.extras ?: Bundle.EMPTY
 
         // Пытаемся найти заголовок в Extras (некоторые приложения передают его)
@@ -110,7 +121,7 @@ object IntentUtils {
         var startIndex = extras.getInt("start_index", 0)
 
         for (i in videoListUris.indices) {
-            val uri = (videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri() ?: continue
+            val uri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri())?.buildUpon()?.fragment(null)?.build() ?: continue
 
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
