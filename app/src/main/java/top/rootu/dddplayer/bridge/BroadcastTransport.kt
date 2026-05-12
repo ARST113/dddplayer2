@@ -11,22 +11,14 @@ class BroadcastTransport(
 
     private val gson = Gson()
 
-    override fun send(event: BridgeEvent) {
-        val type = event::class.simpleName ?: "Unknown"
-        val envelope = BridgeEnvelope(
-            schema = config.schemaVersion,
-            type = type,
-            client = config.client,
-            sessionId = event.sessionId,
-            ts = event.ts,
-            payload = event
-        )
+    override fun send(envelope: BridgeEnvelope) {
+        val type = envelope.type
 
         val intent = Intent(config.eventAction)
         config.receiverPackage?.takeIf { it.isNotBlank() }?.let { intent.setPackage(it) }
         intent.putExtra(EXTRA_SCHEMA, config.schemaVersion)
         intent.putExtra(EXTRA_CLIENT, config.client)
-        intent.putExtra(EXTRA_SESSION_ID, event.sessionId)
+        intent.putExtra(EXTRA_SESSION_ID, envelope.sessionId)
         intent.putExtra(EXTRA_EVENT_TYPE, type)
         intent.putExtra(EXTRA_EVENT_JSON, gson.toJson(envelope))
         context.sendBroadcast(intent)
