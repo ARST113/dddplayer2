@@ -7,7 +7,33 @@ data class BridgeEnvelope(
     val sessionId: String?,
     val ts: Long,
     val payload: BridgeEvent
-)
+) {
+    companion object {
+        fun from(config: BridgeConfig, event: BridgeEvent): BridgeEnvelope {
+            return BridgeEnvelope(
+                schema = config.schemaVersion,
+                type = event.typeName(),
+                client = config.client,
+                sessionId = event.sessionId,
+                ts = event.ts,
+                payload = event
+            )
+        }
+    }
+}
+
+fun BridgeEvent.typeName(): String = when (this) {
+    is BridgeEvent.SessionStarted -> "session_started"
+    is BridgeEvent.PositionTick -> "position_tick"
+    is BridgeEvent.PlaybackStateChanged -> "playback_state_changed"
+    is BridgeEvent.SeekCompleted -> "seek_completed"
+    is BridgeEvent.PlaylistItemChanged -> "playlist_item_changed"
+    is BridgeEvent.PlaybackEnded -> "playback_ended"
+    is BridgeEvent.SessionFinished -> "session_finished"
+    is BridgeEvent.Error -> "error"
+    is BridgeEvent.TrackSelectionChanged -> "track_selection_changed"
+    is BridgeEvent.UserAction -> "user_action"
+}
 
 data class BridgeMediaItem(
     val uri: String?,

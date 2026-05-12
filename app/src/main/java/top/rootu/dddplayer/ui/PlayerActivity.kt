@@ -7,6 +7,9 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.widget.Toast
@@ -25,6 +28,13 @@ import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeMediaItem
 import top.rootu.dddplayer.bridge.BridgeEvent
+import top.rootu.dddplayer.bridge.BridgeTransport
+import top.rootu.dddplayer.bridge.CompositeTransport
+import top.rootu.dddplayer.bridge.LocalBridgeServer
+import top.rootu.dddplayer.bridge.LocalBridgeStore
+import top.rootu.dddplayer.bridge.LocalBridgeTransport
+import top.rootu.dddplayer.bridge.LocalBridgeManager
+import top.rootu.dddplayer.bridge.BridgeMode
 import java.util.concurrent.atomic.AtomicBoolean
 import top.rootu.dddplayer.bridge.BroadcastTransport
 import top.rootu.dddplayer.utils.IntentUtils
@@ -175,11 +185,7 @@ class PlayerActivity : AppCompatActivity() {
 
         shouldReturnResult = intent.getBooleanExtra("return_result", false)
         bridgeConfig = IntentUtils.parseBridgeConfig(intent)
-        bridgeDispatcher = if (bridgeConfig.enabled) {
-            BridgeDispatcher(bridgeConfig, BroadcastTransport(this, bridgeConfig))
-        } else {
-            null
-        }
+        bridgeDispatcher = createBridgeDispatcher(bridgeConfig)
 
         val (playlist, startIndex) = IntentUtils.parseIntent(this, intent)
         when {
@@ -275,7 +281,28 @@ class PlayerActivity : AppCompatActivity() {
             flushFinalOnce("destroy")
         }
         super.onDestroy()
+        if (isChangingConfigurations) LocalBridgeManager.stopNow() else LocalBridgeManager.stopDelayed(5000L)
     }
+
+    private fun createBridgeDispatcher(config: BridgeConfig): BridgeDispatcher? {
+        if (!config.enabled) return null
+        val transports = mutableListOf<BridgeTransport>()
+        if (config.mode == BridgeMode.BROADCAST || config.mode == BridgeMode.BOTH) {
+            transports += BroadcastTransport(this, config)
+        }
+        if (config.mode == BridgeMode.LOCAL || config.mode == BridgeMode.BOTH) {
+            runCatching {
+                val store = LocalBridgeManager.startOrReuse(config)
+                transports += LocalBridgeTransport(config, store)
+            }.onFailure { e ->
+                Log.e("DDDLocalBridge", "Failed to start local bridge on ${config.localHost}:${config.localPort}", e)
+                if (config.mode == BridgeMode.LOCAL) Log.e("DDDLocalBridge", "Local bridge degraded/disabled")
+            }
+        }
+        if (transports.isEmpty()) return null
+        return BridgeDispatcher(config, if (transports.size == 1) transports.first() else CompositeTransport(transports))
+    }
+
 
     private fun flushFinalOnce(reason: String) {
         if (finalFlushSent.compareAndSet(false, true)) {
