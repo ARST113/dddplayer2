@@ -409,7 +409,7 @@ Bridge-события формируются в `PlayerViewModel` и отпра�
 | Транспорт             | Назначение                                       |
 | --------------------- | ------------------------------------------------ |
 | `BroadcastTransport`  | Отправляет событие через Android Broadcast       |
-| `LocalStoreTransport` | Кладёт событие во внутренний `LocalBridgeStore`  |
+| `LocalBridgeTransport` | Кладёт событие во внутренний `LocalBridgeStore`  |
 | `CompositeTransport`  | Отправляет событие сразу в несколько транспортов |
 
 ---
