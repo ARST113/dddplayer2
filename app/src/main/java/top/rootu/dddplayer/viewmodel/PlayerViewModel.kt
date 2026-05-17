@@ -113,6 +113,7 @@ data class VideoQualityOption(
 
 @UnstableApi
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    private companion object { const val TAG = "PlayerViewModel" }
 
     private var ioRetryCount = 0
     private val MAX_IO_RETRIES = 3
@@ -131,6 +132,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastEventFlushUri: String? = null
     private var pendingSeekFromPosition: Long? = null
     private var pendingSeekReason: String? = null
+    private var mediaTransitionGeneration = 0L
     private var previousSnapshotForTransition: PlaybackSnapshot? = null
     private val finalSessionFinishedSent = AtomicBoolean(false)
     private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
@@ -390,7 +392,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         return reason == lastEventFlushReason && snapshot.uri == lastEventFlushUri && (now - lastEventFlushAt) < EVENT_FLUSH_MIN_INTERVAL_MS && posDelta < EVENT_FLUSH_MIN_POSITION_DELTA_MS
     }
 
-    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false) {
+    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false, saveSettings: Boolean = true) {
         if (final && finalSessionFinishedSent.get()) return
         val snapshot = capturePlaybackSnapshot(reason)
         if (snapshot.uri == null && snapshot.position == null) return
@@ -401,7 +403,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lastEventFlushPosition = snapshot.position
         lastEventFlushUri = snapshot.uri
         previousSnapshotForTransition = snapshot
-        saveCurrentSettings()
+        if (saveSettings) saveCurrentSettings()
         if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(snapshot.toPositionTick(reason))
         if (final && bridgeConfig.enabled && finalSessionFinishedSent.compareAndSet(false, true)) {
             bridgeDispatcher?.emit(snapshot.toSessionFinished(reason))
@@ -513,7 +515,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     hasNext = p?.hasNextMediaItem() == true
                 )
             )
-            flushProgress("playlist_item_changed", force = true)
+            flushProgress("playlist_item_changed", force = true, saveSettings = false)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -704,6 +706,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (rendererIndex == C.INDEX_UNSET) return false
 
         player?.let { p ->
+            saveCurrentSettings()
             val trackType = p.getRendererType(rendererIndex)
 
             when (trackType) {
@@ -748,8 +751,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         pendingSubtitleId = null
 
         player?.let { p ->
+            val generation = ++mediaTransitionGeneration
+            val uriForSettings = mediaItem?.localConfiguration?.uri?.toString()
+            Log.d(TAG, "Media item transition generation=$generation uri=$uriForSettings")
             val title = mediaItem?.mediaMetadata?.title?.toString()
-            currentUri = mediaItem?.localConfiguration?.uri?.toString()
+            currentUri = uriForSettings
             _videoTitle.value = title ?: mediaItem?.localConfiguration?.uri?.lastPathSegment
 
             _hasPrevious.value = p.hasPreviousMediaItem()
@@ -771,10 +777,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 .build()
             p.trackSelectionParameters = params
 
-            if (currentUri != null) {
+            if (uriForSettings != null) {
                 viewModelScope.launch {
-                    val saved = repository.getVideoSettings(currentUri!!)
+                    val saved = repository.getVideoSettings(uriForSettings)
+                    if (generation != mediaTransitionGeneration || currentUri != uriForSettings) {
+                        Log.d(TAG, "Skip stale settings load generation=$generation uri=$uriForSettings")
+                        return@launch
+                    }
                     if (saved != null) {
+                        Log.d(TAG, "Loaded settings for uri=$uriForSettings audioTrackId=${saved.audioTrackId} subtitleTrackId=${saved.subtitleTrackId}")
                         applySettings(saved)
                         // Сохраняем ID из базы как отложенные
                         pendingAudioId = saved.audioTrackId
@@ -787,6 +798,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     } else {
                         loadGlobalDefaults()
+                    }
+                    handler.post {
+                        if (generation == mediaTransitionGeneration && currentUri == uriForSettings) {
+                            player?.currentTracks?.let { updateTracksInfo(it) }
+                        }
                     }
                     // Помечаем, что первое видео обработавано.
                     isFirstItemLoaded = true
@@ -995,6 +1011,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         var finalAudioIdx = audioIdx
         var restoreReason: String? = null
         var restoreScore: Int? = null
+        var shouldSaveRestoredTracks = false
+        val requestedPendingAudioId = pendingAudioId
+        val hadPendingAudioId = requestedPendingAudioId != null
         pendingAudioId?.let { id ->
             val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
             if (foundIdx != -1) {
@@ -1008,10 +1027,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val matched = matchTrackByPreference(audioOptions, pref, trackRestoreMode)
                 if (matched != null) {
                     finalAudioIdx = matched.index
-                    restoreReason = "restore_session_preference"
+                    restoreReason = when (matched.reason) {
+                        "ordinal_layout_match" -> "restore_session_preference_ordinal"
+                        "exact_normalized_name", "name_contains_preference", "preference_contains_name" -> "restore_session_preference_name"
+                        else -> "restore_session_preference"
+                    }
                     restoreScore = matched.score
                 }
             }
+        }
+        if (hadPendingAudioId && restoreReason == null) {
+            Log.d(TAG, "Pending audio id not found id=$requestedPendingAudioId uri=$currentUri")
         }
         if (restoreReason != null && finalAudioIdx in audioOptions.indices && finalAudioIdx != audioIdx) {
             selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
@@ -1019,28 +1045,42 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             emitTrackSelectionChanged(audioOptions[finalAudioIdx], finalAudioIdx, "audio", "restore_exact_uri", restoreScore)
         }
         currentAudioIndex = finalAudioIdx
-        _currentAudioTrack.postValue(audioOptions.getOrNull(currentAudioIndex))
+        _currentAudioTrack.value = audioOptions.getOrNull(currentAudioIndex)
+        if (restoreReason != null && finalAudioIdx in audioOptions.indices) {
+            shouldSaveRestoredTracks = true
+        }
 
         // 2. Субтитры
         val (subs, subIdx) = TrackLogic.extractSubtitleTracks(tracks, metadata)
         subtitleOptions = subs
         // Пытаемся применить отложенные субтитры
         var finalSubIdx = subIdx
+        val requestedPendingSubtitleId = pendingSubtitleId
+        val hadPendingSubtitleId = requestedPendingSubtitleId != null
+        var subtitleRestored = false
         pendingSubtitleId?.let { id ->
             // Специальная обработка для "Выкл"
             if (id == "disabled") {
                 finalSubIdx = 0
                 selectTrackByIndex(C.TRACK_TYPE_TEXT, 0)
+                subtitleRestored = true
             } else {
                 val foundIdx = subtitleOptions.indexOfFirst { it.format?.id == id }
                 if (foundIdx != -1) {
                     finalSubIdx = foundIdx
                     selectTrackByIndex(C.TRACK_TYPE_TEXT, foundIdx)
+                    subtitleRestored = true
                 }
             }
         }
+        if (hadPendingSubtitleId && !subtitleRestored) {
+            Log.d(TAG, "Pending subtitle id not found id=$requestedPendingSubtitleId uri=$currentUri")
+        }
         currentSubtitleIndex = finalSubIdx
-        _currentSubtitleTrack.postValue(subtitleOptions.getOrNull(currentSubtitleIndex))
+        _currentSubtitleTrack.value = subtitleOptions.getOrNull(currentSubtitleIndex)
+        if (shouldSaveRestoredTracks) {
+            saveCurrentSettings()
+        }
 
         // Очищаем отложенные ID, так как мы их уже применили (или не нашли)
         pendingAudioId = null
@@ -1066,11 +1106,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun nextTrack() {
         val p = player ?: return
-        if (p.hasNextMediaItem()) { pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true) }
+        if (p.hasNextMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true, saveSettings = false) }
     }
     fun prevTrack() {
         val p = player ?: return
-        if (p.hasPreviousMediaItem()) { pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true) }
+        if (p.hasPreviousMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true, saveSettings = false) }
     }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
@@ -1124,8 +1164,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveCurrentSettings() {
-        val uri = currentUri ?: return
         val p = player ?: return
+        val playerUri = p.currentMediaItem?.localConfiguration?.uri?.toString()
+        val uri = playerUri ?: currentUri ?: return
+        if (currentUri != null && playerUri != null && currentUri != playerUri) {
+            Log.d(TAG, "saveCurrentSettings uri mismatch currentUri=$currentUri playerUri=$playerUri; using playerUri")
+        }
+        currentUri = uri
 
         val positionToSave = if (p.isCurrentMediaItemLive) 0L else p.currentPosition
         // Получаем ID текущих дорожек
@@ -1284,6 +1329,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun playPlaylistItem(index: Int) {
         player?.let { p ->
+            saveCurrentSettings()
             val isVideoError = _videoDisabledError.value == null
             // Сбрасываем ошибку в UI немедленно
             _videoDisabledError.value = null
@@ -1392,9 +1438,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun normalizeTrackName(value: String?): String? {
         if (value.isNullOrBlank()) return null
+        val technicalTokens = setOf(
+            "ac3", "eac3", "dts", "aac", "flac", "opus", "truehd",
+            "2", "0", "5", "1", "7", "192k", "224k", "384k", "448k", "640k"
+        )
         return value.lowercase()
             .replace('ё', 'е')
             .replace(Regex("[^\\p{L}\\p{Nd}\\s]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .split(" ")
+            .filter { token ->
+                if (token.isBlank()) return@filter false
+                if (token.matches(Regex("\\d+k"))) return@filter false
+                if (token.matches(Regex("(2|5|7)(0|1)"))) return@filter false
+                token !in technicalTokens
+            }
+            .joinToString(" ")
             .replace(Regex("\\s+"), " ")
             .trim()
             .ifBlank { null }
@@ -1417,48 +1477,57 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun matchTrackByPreference(options: List<TrackOption>, preference: TrackFingerprint, mode: TrackRestoreMode = TrackRestoreMode.SMART): TrackMatchResult? {
         var bestIdx: Int? = null
         var bestScore = Int.MIN_VALUE
-        var bestOrdinalOnly = false
+        var bestSameOrdinalSameCount = false
         options.forEachIndexed { i, option ->
             val fp = option.toFingerprint(preference.trackType)
             var score = 0
+            var sameOrdinalSameCount = false
             if (!preference.formatId.isNullOrBlank() && preference.formatId == fp.formatId) {
                 return TrackMatchResult(i, 100, "exact_format_id")
             }
-            if (!preference.language.isNullOrBlank() && preference.language == fp.language) score += 35
+            if (!option.isOff && preference.ordinal == fp.ordinal && preference.ordinal > 0 && preference.trackCount != null && preference.trackCount == options.size) {
+                sameOrdinalSameCount = true
+                score += 30
+            }
             if (!preference.normalizedName.isNullOrBlank() && !fp.normalizedName.isNullOrBlank()) {
                 when {
-                    preference.normalizedName == fp.normalizedName -> score += 50
-                    fp.normalizedName.contains(preference.normalizedName) -> score += 35
-                    preference.normalizedName.contains(fp.normalizedName) -> score += 25
+                    preference.normalizedName == fp.normalizedName -> score += 60
+                    fp.normalizedName.contains(preference.normalizedName) -> score += 45
+                    preference.normalizedName.contains(fp.normalizedName) -> score += 35
                 }
+            }
+            if (!preference.language.isNullOrBlank() && preference.language == fp.language) {
+                score += if (!preference.normalizedName.isNullOrBlank()) 35 else 25
             }
             if (!preference.sampleMimeType.isNullOrBlank() && preference.sampleMimeType == fp.sampleMimeType) score += 20
             if (preference.channelCount != null && preference.channelCount == fp.channelCount) score += 15
             if (preference.bitrate != null && fp.bitrate != null && kotlin.math.abs(preference.bitrate - fp.bitrate) < 64_000) score += 5
-            if (preference.ordinal == fp.ordinal) score += 10
-            if (score > bestScore) { bestScore = score; bestIdx = i; bestOrdinalOnly = (score == 10) }
+            if (score > bestScore) {
+                bestScore = score
+                bestIdx = i
+                bestSameOrdinalSameCount = sameOrdinalSameCount
+            }
         }
         if (bestIdx == null) return null
-        if (bestScore >= 35) {
-            val languageOnly = bestScore == 35 &&
+        if (bestScore >= 45 || (bestSameOrdinalSameCount && bestScore >= 35)) {
+            val languageOnly = bestScore <= 35 &&
                 !preference.language.isNullOrBlank() &&
                 preference.normalizedName.isNullOrBlank() &&
                 preference.sampleMimeType.isNullOrBlank() &&
                 preference.channelCount == null
             val sameLanguageCount = options.count { it.format?.language == preference.language }
             if (mode == TrackRestoreMode.SMART && languageOnly && sameLanguageCount > 1) return null
-            return TrackMatchResult(bestIdx!!, bestScore, "scored_match")
-        }
-        if (!bestOrdinalOnly) return null
-        return when (mode) {
-            TrackRestoreMode.SAFE -> null
-            TrackRestoreMode.SMART -> {
-                val sameTrackCount = preference.trackCount != null && preference.trackCount == options.size
-                val noConflicts = preference.language.isNullOrBlank() && preference.normalizedName.isNullOrBlank() && preference.nameFromMeta.isNullOrBlank()
-                if (sameTrackCount && noConflicts) TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_smart") else null
+            val bestFp = options[bestIdx!!].toFingerprint(preference.trackType)
+            val reason = when {
+                !preference.normalizedName.isNullOrBlank() && preference.normalizedName == bestFp.normalizedName -> "exact_normalized_name"
+                !preference.normalizedName.isNullOrBlank() && !bestFp.normalizedName.isNullOrBlank() && bestFp.normalizedName.contains(preference.normalizedName) -> "name_contains_preference"
+                !preference.normalizedName.isNullOrBlank() && !bestFp.normalizedName.isNullOrBlank() && preference.normalizedName.contains(bestFp.normalizedName) -> "preference_contains_name"
+                bestSameOrdinalSameCount && bestScore >= 35 -> "ordinal_layout_match"
+                else -> "scored_match"
             }
-            TrackRestoreMode.AGGRESSIVE -> TrackMatchResult(bestIdx!!, bestScore, "ordinal_fallback_aggressive")
+            return TrackMatchResult(bestIdx, bestScore, reason)
         }
+        return null
     }
 
     private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
