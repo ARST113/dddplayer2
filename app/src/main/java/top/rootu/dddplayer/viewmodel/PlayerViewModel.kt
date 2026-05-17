@@ -113,6 +113,7 @@ data class VideoQualityOption(
 
 @UnstableApi
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    private companion object { const val TAG = "PlayerViewModel" }
 
     private var ioRetryCount = 0
     private val MAX_IO_RETRIES = 3
@@ -131,6 +132,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastEventFlushUri: String? = null
     private var pendingSeekFromPosition: Long? = null
     private var pendingSeekReason: String? = null
+    private var mediaTransitionGeneration = 0L
     private var previousSnapshotForTransition: PlaybackSnapshot? = null
     private val finalSessionFinishedSent = AtomicBoolean(false)
     private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
@@ -390,7 +392,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         return reason == lastEventFlushReason && snapshot.uri == lastEventFlushUri && (now - lastEventFlushAt) < EVENT_FLUSH_MIN_INTERVAL_MS && posDelta < EVENT_FLUSH_MIN_POSITION_DELTA_MS
     }
 
-    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false) {
+    fun flushProgress(reason: String, final: Boolean = false, includeError: PlaybackException? = null, force: Boolean = false, saveSettings: Boolean = true) {
         if (final && finalSessionFinishedSent.get()) return
         val snapshot = capturePlaybackSnapshot(reason)
         if (snapshot.uri == null && snapshot.position == null) return
@@ -401,7 +403,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lastEventFlushPosition = snapshot.position
         lastEventFlushUri = snapshot.uri
         previousSnapshotForTransition = snapshot
-        saveCurrentSettings()
+        if (saveSettings) saveCurrentSettings()
         if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(snapshot.toPositionTick(reason))
         if (final && bridgeConfig.enabled && finalSessionFinishedSent.compareAndSet(false, true)) {
             bridgeDispatcher?.emit(snapshot.toSessionFinished(reason))
@@ -513,7 +515,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     hasNext = p?.hasNextMediaItem() == true
                 )
             )
-            flushProgress("playlist_item_changed", force = true)
+            flushProgress("playlist_item_changed", force = true, saveSettings = false)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -704,6 +706,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (rendererIndex == C.INDEX_UNSET) return false
 
         player?.let { p ->
+            saveCurrentSettings()
             val trackType = p.getRendererType(rendererIndex)
 
             when (trackType) {
@@ -748,8 +751,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         pendingSubtitleId = null
 
         player?.let { p ->
+            val generation = ++mediaTransitionGeneration
+            val uriForSettings = mediaItem?.localConfiguration?.uri?.toString()
+            Log.d(TAG, "Media item transition generation=$generation uri=$uriForSettings")
             val title = mediaItem?.mediaMetadata?.title?.toString()
-            currentUri = mediaItem?.localConfiguration?.uri?.toString()
+            currentUri = uriForSettings
             _videoTitle.value = title ?: mediaItem?.localConfiguration?.uri?.lastPathSegment
 
             _hasPrevious.value = p.hasPreviousMediaItem()
@@ -771,10 +777,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 .build()
             p.trackSelectionParameters = params
 
-            if (currentUri != null) {
+            if (uriForSettings != null) {
                 viewModelScope.launch {
-                    val saved = repository.getVideoSettings(currentUri!!)
+                    val saved = repository.getVideoSettings(uriForSettings)
+                    if (generation != mediaTransitionGeneration || currentUri != uriForSettings) {
+                        Log.d(TAG, "Skip stale settings load generation=$generation uri=$uriForSettings")
+                        return@launch
+                    }
                     if (saved != null) {
+                        Log.d(TAG, "Loaded settings for uri=$uriForSettings audioTrackId=${saved.audioTrackId} subtitleTrackId=${saved.subtitleTrackId}")
                         applySettings(saved)
                         // Сохраняем ID из базы как отложенные
                         pendingAudioId = saved.audioTrackId
@@ -787,6 +798,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     } else {
                         loadGlobalDefaults()
+                    }
+                    handler.post {
+                        if (generation == mediaTransitionGeneration && currentUri == uriForSettings) {
+                            player?.currentTracks?.let { updateTracksInfo(it) }
+                        }
                     }
                     // Помечаем, что первое видео обработавано.
                     isFirstItemLoaded = true
@@ -1066,11 +1082,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun nextTrack() {
         val p = player ?: return
-        if (p.hasNextMediaItem()) { pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true) }
+        if (p.hasNextMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true, saveSettings = false) }
     }
     fun prevTrack() {
         val p = player ?: return
-        if (p.hasPreviousMediaItem()) { pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true) }
+        if (p.hasPreviousMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true, saveSettings = false) }
     }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
@@ -1124,8 +1140,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveCurrentSettings() {
-        val uri = currentUri ?: return
         val p = player ?: return
+        val playerUri = p.currentMediaItem?.localConfiguration?.uri?.toString()
+        val uri = playerUri ?: currentUri ?: return
+        if (currentUri != null && playerUri != null && currentUri != playerUri) {
+            Log.d(TAG, "saveCurrentSettings uri mismatch currentUri=$currentUri playerUri=$playerUri; using playerUri")
+        }
+        currentUri = uri
 
         val positionToSave = if (p.isCurrentMediaItemLive) 0L else p.currentPosition
         // Получаем ID текущих дорожек
