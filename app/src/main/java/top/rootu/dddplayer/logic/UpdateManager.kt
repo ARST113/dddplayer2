@@ -28,7 +28,11 @@ class UpdateManager(private val context: Context) {
         val release = (fetchRelease(primary) ?: if (channel == UpdateChannel.NIGHTLY) fetchRelease(latestUrl) else null) ?: return@withContext null
         val tag = release.optString("tag_name")
         val isNightly = channel == UpdateChannel.NIGHTLY || tag.equals("nightly", ignoreCase = true)
-        if (!isNightly && currentVersionName != null && !VersionComparator.isRemoteNewer(currentVersionName, tag)) return@withContext null
+        if (!isNightly && currentVersionName != null) {
+            val normalizedCurrent = currentVersionName.removePrefix("v")
+            val normalizedTag = tag.removePrefix("v")
+            if (normalizedCurrent == normalizedTag || !VersionComparator.isRemoteNewer(normalizedCurrent, normalizedTag)) return@withContext null
+        }
         val asset = pickApkAsset(release.optJSONArray("assets") ?: return@withContext null) ?: return@withContext null
         val url = asset.optString("browser_download_url")
         if (!isAllowedUrl(url)) return@withContext null
@@ -38,10 +42,11 @@ class UpdateManager(private val context: Context) {
     private fun fetchRelease(url: String): JSONObject? = try { client.newCall(Request.Builder().url(url).build()).execute().use { if (!it.isSuccessful) null else JSONObject(it.body.string()) } } catch (_: Exception) { null }
     private fun pickApkAsset(assets: org.json.JSONArray): JSONObject? {
         val list = (0 until assets.length()).map { assets.getJSONObject(it) }.filter { it.optString("name").endsWith(".apk") }
-        return list.firstOrNull { it.optString("name") == "app-release.apk" }
-            ?: list.firstOrNull { it.optString("name") == "dddplayer2-release.apk" }
-            ?: list.firstOrNull { !it.optString("name").contains("debug", true) }
-            ?: list.firstOrNull()
+        val nonDebug = list.filterNot { it.optString("name").contains("debug", true) }
+        return nonDebug.firstOrNull { it.optString("name").contains("release", true) }
+            ?: nonDebug.firstOrNull { it.optString("name") == "app-release.apk" }
+            ?: nonDebug.firstOrNull { it.optString("name") == "dddplayer2-release.apk" }
+            ?: nonDebug.firstOrNull()
     }
     private fun isAllowedUrl(url: String): Boolean {
         val uri = Uri.parse(url)
