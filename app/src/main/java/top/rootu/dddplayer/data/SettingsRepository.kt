@@ -132,6 +132,8 @@ class SettingsRepository private constructor(context: Context) {
 
     fun getAppLanguage(): String = prefs.getString("app_language", LANG_SYSTEM_DEFAULT) ?: LANG_SYSTEM_DEFAULT
     fun setAppLanguage(langCode: String) = prefs.edit { putString("app_language", langCode) }
+    fun isShowAudioRestoreDebugEnabled(): Boolean = prefs.getBoolean("audio_restore_debug", false)
+    fun setShowAudioRestoreDebugEnabled(enabled: Boolean) = prefs.edit { putBoolean("audio_restore_debug", enabled) }
 
     fun getResumeMode(): Int = prefs.getInt("resume_mode", RESUME_ASK)
     fun setResumeMode(mode: Int) = prefs.edit { putInt("resume_mode", mode) }

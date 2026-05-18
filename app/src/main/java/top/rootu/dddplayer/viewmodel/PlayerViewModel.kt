@@ -83,6 +83,34 @@ data class TrackFingerprint(
 
 enum class TrackRestoreMode { SAFE, SMART, AGGRESSIVE }
 data class TrackMatchResult(val index: Int, val score: Int, val reason: String)
+data class AudioOptionDebug(
+    val index: Int,
+    val formatId: String?,
+    val normalizedName: String?,
+    val label: String?,
+    val nameFromMeta: String?,
+    val language: String?,
+    val channelCount: Int?,
+    val sampleMimeType: String?,
+    val bitrate: Int?,
+    val isSelected: Boolean,
+    val isOff: Boolean
+)
+data class AudioRestoreDebugSnapshot(
+    val timestamp: Long,
+    val uri: String?,
+    val mediaIndex: Int,
+    val mediaTitle: String?,
+    val pendingAudioId: String?,
+    val pendingSubtitleId: String?,
+    val hasExplicitSessionAudioPreference: Boolean,
+    val sessionPreference: String?,
+    val selectedBeforeIndex: Int,
+    val selectedAfterIndex: Int,
+    val restoreReason: String?,
+    val restoreScore: Int?,
+    val options: List<AudioOptionDebug>
+)
 
 
 data class PlaybackSnapshot(
@@ -138,6 +166,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
     private val EVENT_FLUSH_MIN_POSITION_DELTA_MS = 1_000L
     private var sessionAudioPreference: TrackFingerprint? = null
+    private var hasExplicitSessionAudioPreference = false
+    private val audioRestoreDebugBuffer = ArrayDeque<AudioRestoreDebugSnapshot>()
+    private val maxAudioRestoreDebugEntries = 30
+    private var showAudioRestoreDebugToast = repository.isShowAudioRestoreDebugEnabled()
     private val trackRestoreMode: TrackRestoreMode = TrackRestoreMode.SMART
 
     // Делегат для 3D/VR настроек
@@ -1014,24 +1046,37 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         var shouldSaveRestoredTracks = false
         val requestedPendingAudioId = pendingAudioId
         val hadPendingAudioId = requestedPendingAudioId != null
-        pendingAudioId?.let { id ->
-            val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
-            if (foundIdx != -1) {
-                finalAudioIdx = foundIdx
-                restoreReason = "restore_exact_uri"
-                restoreScore = 100
+        val sessionPref = sessionAudioPreference
+        if (hasExplicitSessionAudioPreference && sessionPref != null) {
+            val matched = matchTrackByPreference(audioOptions, sessionPref, trackRestoreMode, explicitNamePriority = true)
+            if (matched != null) {
+                finalAudioIdx = matched.index
+                restoreReason = reasonFromSessionMatch(matched.reason)
+                restoreScore = matched.score
+            } else {
+                pendingAudioId?.let { id ->
+                    val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
+                    if (foundIdx != -1) {
+                        finalAudioIdx = foundIdx
+                        restoreReason = "restore_exact_uri"
+                        restoreScore = 100
+                    }
+                }
             }
-        }
-        if (restoreReason == null) {
-            sessionAudioPreference?.let { pref ->
-                val matched = matchTrackByPreference(audioOptions, pref, trackRestoreMode)
+        } else {
+            pendingAudioId?.let { id ->
+                val foundIdx = audioOptions.indexOfFirst { it.format?.id == id }
+                if (foundIdx != -1) {
+                    finalAudioIdx = foundIdx
+                    restoreReason = "restore_exact_uri"
+                    restoreScore = 100
+                }
+            }
+            if (restoreReason == null && sessionPref != null) {
+                val matched = matchTrackByPreference(audioOptions, sessionPref, trackRestoreMode)
                 if (matched != null) {
                     finalAudioIdx = matched.index
-                    restoreReason = when (matched.reason) {
-                        "ordinal_layout_match" -> "restore_session_preference_ordinal"
-                        "exact_normalized_name", "name_contains_preference", "preference_contains_name" -> "restore_session_preference_name"
-                        else -> "restore_session_preference"
-                    }
+                    restoreReason = reasonFromSessionMatch(matched.reason)
                     restoreScore = matched.score
                 }
             }
@@ -1046,6 +1091,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         currentAudioIndex = finalAudioIdx
         _currentAudioTrack.value = audioOptions.getOrNull(currentAudioIndex)
+        appendAudioRestoreDebugSnapshot(audioIdx, finalAudioIdx, requestedPendingAudioId, pendingSubtitleId, restoreReason, restoreScore)
+        if (showAudioRestoreDebugToast && restoreReason != null) {
+            val selected = audioOptions.getOrNull(finalAudioIdx)
+            val label = selected?.nameFromMeta ?: selected?.format?.label ?: selected?.format?.id ?: "unknown"
+            _toastMessage.postValue("Audio restore: $label, reason=$restoreReason, score=${restoreScore ?: 0}")
+        }
         if (restoreReason != null && finalAudioIdx in audioOptions.indices) {
             shouldSaveRestoredTracks = true
         }
@@ -1319,6 +1370,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 context.getString(R.string.menu_global_settings_title),
                 context.getString(R.string.menu_global_settings_desc),
                 R.drawable.ic_build
+            ),
+            MenuItem(
+                "audio_restore_debug",
+                "Диагностика аудио",
+                "Показать журнал восстановления аудио",
+                R.drawable.ic_build
+            ),
+            MenuItem(
+                "audio_restore_debug_toggle",
+                "Показывать debug audio restore",
+                if (showAudioRestoreDebugToast) "Включено" else "Выключено",
+                R.drawable.ic_settings_3d
             )
         )
     }
@@ -1408,6 +1471,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (persist) {
                     saveCurrentSettings()
                     sessionAudioPreference = option.toFingerprint(trackType)
+                    hasExplicitSessionAudioPreference = true
+                    Log.d(TAG, "Session audio preference set index=$index normalized=${sessionAudioPreference?.normalizedName} id=${sessionAudioPreference?.formatId} label=${option.nameFromMeta ?: option.format?.label}")
                 }
                 emitTrackSelectionChanged(option, index, "audio", reason, matchScore)
             } else {
@@ -1474,7 +1539,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         nameFromMeta = nameFromMeta
     )
 
-    private fun matchTrackByPreference(options: List<TrackOption>, preference: TrackFingerprint, mode: TrackRestoreMode = TrackRestoreMode.SMART): TrackMatchResult? {
+    private fun matchTrackByPreference(options: List<TrackOption>, preference: TrackFingerprint, mode: TrackRestoreMode = TrackRestoreMode.SMART, explicitNamePriority: Boolean = false): TrackMatchResult? {
+        if (explicitNamePriority && !preference.normalizedName.isNullOrBlank()) {
+            val prefName = preference.normalizedName
+            val named = options.mapIndexed { i, o -> i to o.toFingerprint(preference.trackType) }.filter { !it.second.normalizedName.isNullOrBlank() && !options[it.first].isOff }
+            val exact = named.firstOrNull { it.second.normalizedName == prefName }
+            if (exact != null) return TrackMatchResult(exact.first, 100, "exact_normalized_name")
+            val contains = named.firstOrNull { it.second.normalizedName!!.contains(prefName!!) }
+            if (contains != null) return TrackMatchResult(contains.first, 80, "name_contains_preference")
+            val reverseContains = named.firstOrNull { prefName!!.contains(it.second.normalizedName!!) && it.second.normalizedName!!.length >= 4 }
+            if (reverseContains != null) return TrackMatchResult(reverseContains.first, 70, "preference_contains_name")
+            if (named.isNotEmpty()) return null
+        }
         var bestIdx: Int? = null
         var bestScore = Int.MIN_VALUE
         var bestSameOrdinalSameCount = false
@@ -1482,7 +1558,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val fp = option.toFingerprint(preference.trackType)
             var score = 0
             var sameOrdinalSameCount = false
-            if (!preference.formatId.isNullOrBlank() && preference.formatId == fp.formatId) {
+            if (!preference.formatId.isNullOrBlank() && preference.formatId == fp.formatId &&
+                (!explicitNamePriority || !isNumericTrackId(preference.formatId))) {
                 return TrackMatchResult(i, 100, "exact_format_id")
             }
             if (!option.isOff && preference.ordinal == fp.ordinal && preference.ordinal > 0 && preference.trackCount != null && preference.trackCount == options.size) {
@@ -1528,6 +1605,65 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             return TrackMatchResult(bestIdx, bestScore, reason)
         }
         return null
+    }
+    private fun isNumericTrackId(value: String?): Boolean = value?.matches(Regex("\\d+")) == true
+    private fun reasonFromSessionMatch(reason: String): String = when (reason) {
+        "exact_normalized_name", "name_contains_preference", "preference_contains_name" -> "restore_session_preference_name"
+        "ordinal_layout_match" -> "restore_session_preference_ordinal"
+        else -> "restore_session_preference"
+    }
+    private fun appendAudioRestoreDebugSnapshot(beforeIdx: Int, afterIdx: Int, pendingAudio: String?, pendingSub: String?, reason: String?, score: Int?) {
+        val p = player
+        val sessionPref = sessionAudioPreference
+        val snapshot = AudioRestoreDebugSnapshot(
+            timestamp = System.currentTimeMillis(),
+            uri = currentUri,
+            mediaIndex = p?.currentMediaItemIndex ?: -1,
+            mediaTitle = p?.currentMediaItem?.mediaMetadata?.title?.toString(),
+            pendingAudioId = pendingAudio,
+            pendingSubtitleId = pendingSub,
+            hasExplicitSessionAudioPreference = hasExplicitSessionAudioPreference,
+            sessionPreference = "normalizedName=${sessionPref?.normalizedName};formatId=${sessionPref?.formatId};ordinal=${sessionPref?.ordinal};trackCount=${sessionPref?.trackCount}",
+            selectedBeforeIndex = beforeIdx,
+            selectedAfterIndex = afterIdx,
+            restoreReason = reason,
+            restoreScore = score,
+            options = audioOptions.mapIndexed { idx, option ->
+                AudioOptionDebug(idx, option.format?.id, normalizeTrackName(option.nameFromMeta ?: option.format?.label), option.format?.label, option.nameFromMeta, option.format?.language, option.format?.channelCount, option.format?.sampleMimeType, option.format?.bitrate, idx == afterIdx, option.isOff)
+            }
+        )
+        audioRestoreDebugBuffer.addLast(snapshot)
+        while (audioRestoreDebugBuffer.size > maxAudioRestoreDebugEntries) audioRestoreDebugBuffer.removeFirst()
+    }
+    fun getAudioRestoreDebugText(): String {
+        if (audioRestoreDebugBuffer.isEmpty()) return "=== Audio restore debug ===\nNo entries yet."
+        return buildString {
+            appendLine("=== Audio restore debug ===")
+            audioRestoreDebugBuffer.forEach { s ->
+                appendLine("ts=${s.timestamp}")
+                appendLine("uri=${s.uri}")
+                appendLine("mediaIndex=${s.mediaIndex}")
+                appendLine("title=${s.mediaTitle}")
+                appendLine("pendingAudioId=${s.pendingAudioId}")
+                appendLine("pendingSubtitleId=${s.pendingSubtitleId}")
+                appendLine("hasExplicitSessionAudioPreference=${s.hasExplicitSessionAudioPreference}")
+                appendLine("sessionPref=${s.sessionPreference}")
+                appendLine("selectedBeforeIndex=${s.selectedBeforeIndex}")
+                appendLine("selectedAfterIndex=${s.selectedAfterIndex}")
+                appendLine("restoreReason=${s.restoreReason}")
+                appendLine("restoreScore=${s.restoreScore}")
+                appendLine("Options:")
+                s.options.forEach { o ->
+                    if (o.isOff) appendLine("[${o.index}] OFF") else appendLine("[${o.index}] id=${o.formatId} normalized=${o.normalizedName} label=${o.label} nameFromMeta=${o.nameFromMeta} lang=${o.language} channels=${o.channelCount} mime=${o.sampleMimeType} bitrate=${o.bitrate} selected=${o.isSelected}")
+                }
+                appendLine()
+            }
+        }
+    }
+    fun isShowAudioRestoreDebugEnabled(): Boolean = showAudioRestoreDebugToast
+    fun toggleShowAudioRestoreDebug() {
+        showAudioRestoreDebugToast = !showAudioRestoreDebugToast
+        repository.setShowAudioRestoreDebugEnabled(showAudioRestoreDebugToast)
     }
 
     private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
