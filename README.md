@@ -170,7 +170,7 @@ LocalBridgeServer 127.0.0.1
 | `PlayerViewModel`      | Управляет ExoPlayer, состоянием воспроизведения и эмиссией bridge-событий     |
 | `BridgeConfig`         | Конфигурация bridge-сессии                                                    |
 | `BridgeDispatcher`     | Единая точка отправки bridge-событий                                          |
-| `BroadcastTransport`   | Отправляет события через Android Broadcast                                    |
+| `BroadcastTransport`   | Отправляет события через Android Broadcast(будет работать только при внесении мзменений в apk Lampa)                                    |
 | `LocalBridgeTransport` | Кладёт события в `LocalBridgeStore`                                           |
 | `CompositeTransport`   | Отправляет событие сразу в несколько transport-реализаций                     |
 | `LocalBridgeStore`     | In-memory store последних событий и состояния по session id                   |
