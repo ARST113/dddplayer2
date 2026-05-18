@@ -37,6 +37,10 @@
 → отдал позицию, состояние, переходы и завершение через bridge
 ```
 
+### Last release links:
+- [Release page](https://github.com/ARST113/dddplayer2/releases)
+- [Direct apk download link](https://github.com/ARST113/dddplayer2/releases/download/v0.0.2/dddplayer-v0.0.2-release.apk)
+
 ## Текущий статус
 
 На текущий момент в проекте реализованы:
