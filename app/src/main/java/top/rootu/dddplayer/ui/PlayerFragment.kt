@@ -2,6 +2,8 @@ package top.rootu.dddplayer.ui
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -22,6 +24,7 @@ import android.widget.Button
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -613,8 +616,44 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
                     sideMenuDialog?.dismiss()
                     startActivity(Intent(requireContext(), GlobalSettingsActivity::class.java))
                 }
+                "audio_restore_debug" -> {
+                    sideMenuDialog?.dismiss()
+                    showAudioRestoreDebugDialog()
+                }
+                "audio_restore_debug_toggle" -> {
+                    viewModel.toggleShowAudioRestoreDebug()
+                    Toast.makeText(requireContext(), if (viewModel.isShowAudioRestoreDebugEnabled()) "Audio restore debug: ON" else "Audio restore debug: OFF", Toast.LENGTH_SHORT).show()
+                    showMainMenu("audio_restore_debug_toggle")
+                }
             }
         }
+    }
+
+    private fun showAudioRestoreDebugDialog() {
+        val text = viewModel.getAudioRestoreDebugText()
+        val tv = TextView(requireContext()).apply {
+            this.text = text
+            setPadding(24, 24, 24, 24)
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val scroll = android.widget.ScrollView(requireContext()).apply { addView(tv) }
+        AlertDialog.Builder(requireContext())
+            .setTitle("Диагностика аудио")
+            .setView(scroll)
+            .setPositiveButton("Закрыть", null)
+            .setNeutralButton("Скопировать") { _, _ ->
+                val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("audio_restore_debug", text))
+                Toast.makeText(requireContext(), "Скопировано", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Поделиться") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }, "Поделиться диагностикой"))
+            }
+            .show()
     }
 
     private fun showAudioTrackMenu() {
