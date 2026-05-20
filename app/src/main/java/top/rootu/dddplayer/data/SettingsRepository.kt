@@ -176,6 +176,7 @@ class SettingsRepository private constructor(context: Context) {
         }
     }
 
+
     fun saveGlobalDefaults(
         outputMode: StereoOutputMode,
         anaglyphType: StereoRenderer.AnaglyphType
