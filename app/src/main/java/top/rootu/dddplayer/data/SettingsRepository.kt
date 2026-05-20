@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import top.rootu.dddplayer.player.backend.BufferProfile
 import top.rootu.dddplayer.model.StereoOutputMode
 import top.rootu.dddplayer.renderer.StereoRenderer
 
@@ -144,6 +145,19 @@ class SettingsRepository private constructor(context: Context) {
     // Горизонтальный свайп ( 0 = None, 1 = Seek, 2 = Playlist)
     fun getHorizontalSwipeAction(): Int = prefs.getInt("horizontal_swipe_action", 2)
     fun setHorizontalSwipeAction(action: Int) = prefs.edit { putInt("horizontal_swipe_action", action) }
+
+    fun getPlaybackBackendMode(): String = prefs.getString("playback_backend_mode", "AUTO") ?: "AUTO"
+    fun setPlaybackBackendMode(mode: String) = prefs.edit { putString("playback_backend_mode", mode) }
+    fun isFallbackOnVideoDecoderError(): Boolean = prefs.getBoolean("fallback_on_video_decoder_error", true)
+    fun setFallbackOnVideoDecoderError(enabled: Boolean) = prefs.edit { putBoolean("fallback_on_video_decoder_error", enabled) }
+    fun getMedia3CompatibilityMode(): String = prefs.getString("media3_compatibility_mode", "AUTO") ?: "AUTO"
+    fun setMedia3CompatibilityMode(mode: String) = prefs.edit { putString("media3_compatibility_mode", mode) }
+    fun getBufferProfile(): BufferProfile = runCatching { BufferProfile.valueOf(prefs.getString("buffer_profile", BufferProfile.BALANCED.name)!!) }.getOrDefault(BufferProfile.BALANCED)
+    fun setBufferProfile(profile: BufferProfile) = prefs.edit { putString("buffer_profile", profile.name) }
+    fun getCustomMinBufferMs(): Int = prefs.getInt("custom_min_buffer_ms", 30000)
+    fun getCustomMaxBufferMs(): Int = prefs.getInt("custom_max_buffer_ms", 60000)
+    fun getCustomBufferForPlaybackMs(): Int = prefs.getInt("custom_buffer_for_playback_ms", 1500)
+    fun getCustomBufferAfterRebufferMs(): Int = prefs.getInt("custom_buffer_after_rebuffer_ms", 2500)
 
     fun isShowClock(): Boolean = prefs.getBoolean("show_clock", false)
     fun setShowClock(enabled: Boolean) = prefs.edit { putBoolean("show_clock", enabled) }

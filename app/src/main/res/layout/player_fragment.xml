@@ -26,13 +26,6 @@
 
     </androidx.media3.ui.AspectRatioFrameLayout>
 
-    <!-- 2. OpenGL SurfaceView для 3D/VR/Анаглифа -->
-    <top.rootu.dddplayer.renderer.StereoGLSurfaceView
-        android:id="@+id/gl_surface_view"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone"/>
-
     <!-- Слой субтитров (Одиночный) -->
     <androidx.media3.ui.SubtitleView
         android:id="@+id/subtitle_view"
