@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import androidx.media3.exoplayer.DefaultRenderersFactory
-import top.rootu.dddplayer.model.StereoOutputMode
-import top.rootu.dddplayer.renderer.StereoRenderer
 
 class SettingsRepository private constructor(context: Context) {
 
@@ -176,13 +174,5 @@ class SettingsRepository private constructor(context: Context) {
         }
     }
 
-    fun saveGlobalDefaults(
-        outputMode: StereoOutputMode,
-        anaglyphType: StereoRenderer.AnaglyphType
-    ) {
-        prefs.edit {
-            putInt("def_output_mode", outputMode.ordinal)
-            putInt("def_anaglyph_type", anaglyphType.ordinal)
-        }
-    }
+
 }

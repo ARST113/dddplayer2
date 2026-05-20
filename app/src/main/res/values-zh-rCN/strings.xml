@@ -30,7 +30,7 @@
     <string name="resize_mode_fill">拉伸</string>
     <string name="resize_mode_fill_desc">全屏填充（忽略比例）</string>
 
-    <!-- 3D 模式 -->
+    <!-- 旧播放模式标签（兼容保留） -->
     <string name="stereo_mode_mono">普通 2D</string>
     <string name="stereo_mode_sbs">左右格式 (SBS)</string>
     <string name="stereo_mode_tb">上下格式 (OU)</string>
@@ -73,7 +73,7 @@
     <string name="menu_audio_title">音轨 (%d)</string>
     <string name="menu_subtitle_title">字幕 (%d)</string>
     <string name="menu_quick_settings_title">快捷设置面板</string>
-    <string name="menu_quick_settings_desc">3D、视差、眼镜…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">全局设置</string>
     <string name="menu_global_settings_desc">解码器、语言、界面…</string>
     <string name="playlist">播放列表</string>
@@ -145,11 +145,11 @@
     <string name="pref_language_track_device">设备语言</string>
     <string name="pref_sub_lang_default">默认字幕语言</string>
     <string name="pref_sub_lang_default_desc">首选字幕（如果可用）</string>
-    <string name="pref_calibration_3d">3D 校准</string>
-    <string name="pref_cardboard_vr">Cardboard VR 设置</string>
-    <string name="pref_cardboard_vr_desc">镜头、缩放和 IPD 设置向导</string>
-    <string name="pref_anaglyph">红蓝眼镜设置</string>
-    <string name="pref_anaglyph_desc">眼镜类型检测和色彩校正</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
+    <string name="pref_cardboard_vr_desc">General playback and display options</string>
+    <string name="pref_anaglyph">Color Settings</string>
+    <string name="pref_anaglyph_desc">Color and subtitle presentation options</string>
     <string name="pref_sec_app">应用</string>
     <string name="pref_language_system">使用系统语言</string>
     <string name="pref_up_action">"上"键操作</string>
@@ -225,7 +225,7 @@
     <string name="qr_code">二维码</string>
 
     <!-- VR 配置 -->
-    <string name="vr_config_title">VR 设置</string>
+    <string name="vr_config_title">Display Settings</string>
     <string name="vr_config_success">Cardboard 配置文件已成功应用！\n\nK1: %1$.3f\nK2: %2$.3f</string>
     <string name="vr_config_error">读取 Cardboard 配置文件时出错。</string>
     <string name="pref_app_language_desc">切换应用语言。此更改需要重启应用。</string>

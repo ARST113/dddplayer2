@@ -26,7 +26,7 @@
 
     </androidx.media3.ui.AspectRatioFrameLayout>
 
-    <!-- 2. OpenGL SurfaceView для 3D/VR/Анаглифа -->
+    <!-- 2. Playback surface -->
     <top.rootu.dddplayer.renderer.StereoGLSurfaceView
         android:id="@+id/gl_surface_view"
         android:layout_width="match_parent"
@@ -41,7 +41,7 @@
         android:background="@color/transparent"
         android:visibility="visible"/>
 
-    <!-- Слой субтитров (Двойной - для Cardboard VR) -->
+    <!-- Subtitle layer -->
     <LinearLayout
         android:id="@+id/subtitle_split_container"
         android:layout_width="match_parent"
@@ -478,7 +478,7 @@
             tools:text="100%" />
     </FrameLayout>
 
-    <!-- Индикатор буферизации (Двойной - для Cardboard VR) -->
+    <!-- Buffering indicator -->
     <LinearLayout
         android:id="@+id/buffering_split_container"
         android:layout_width="match_parent"
