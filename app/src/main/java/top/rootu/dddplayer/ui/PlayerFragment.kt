@@ -229,6 +229,7 @@ class PlayerFragment : Fragment() {
 
     private fun attachSurfaceToPlayer(player: Player) {
         player.setVideoSurfaceView(ui.standardSurfaceView)
+        viewModel.bindSurfaceHolder(ui.standardSurfaceView.holder)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -328,7 +329,7 @@ class PlayerFragment : Fragment() {
             swipeSeekCurrentPosition = (swipeSeekCurrentPosition + timeDelta).coerceIn(0, duration)
 
             // Используем центральный оверлей (тот же, что и для кнопок)
-            val totalDelta = swipeSeekCurrentPosition - (viewModel.player?.currentPosition ?: 0L)
+            val totalDelta = swipeSeekCurrentPosition - viewModel.getCurrentPositionMs()
             val isLive = viewModel.isLive.value ?: false
             val liveOffset = if (isLive) ((viewModel.duration.value ?: 0L) - swipeSeekCurrentPosition).coerceAtLeast(0) else 0L
             ui.showSeekOverlay(totalDelta, swipeSeekCurrentPosition, isLive, liveOffset)
@@ -1065,7 +1066,7 @@ class PlayerFragment : Fragment() {
             if (settingsRepo.isFrameRateMatchingEnabled()) {
 
                 // 1. Проверка на короткие видео (Skip Shorts)
-                val durationMs = viewModel.player?.duration ?: C.TIME_UNSET
+                val durationMs = viewModel.getDurationMs().takeIf { it > 0 } ?: C.TIME_UNSET
                 if (settingsRepo.isAfrSkipShortsEnabled() && durationMs in 1..60000) {
                     return@observe
                 }
@@ -1279,6 +1280,7 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         // Сначала отвязываем поверхность от плеера
         viewModel.player?.setVideoSurface(null)
+        viewModel.bindSurfaceHolder(null)
 
         // Останавливаем таймеры
         timerController.cleanup()
