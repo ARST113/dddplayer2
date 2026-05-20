@@ -698,6 +698,42 @@ class PlayerManager(
     fun pause() = activeBackend?.pause()
     fun seekTo(positionMs: Long) = activeBackend?.seekTo(positionMs)
 
+
+    fun hasNext(): Boolean = getCurrentWindowIndex() < currentPlaylistItems.lastIndex
+    fun hasPrevious(): Boolean = getCurrentWindowIndex() > 0
+
+    fun playIndex(index: Int, startPositionMs: Long = 0L): Boolean {
+        if (index !in currentPlaylistItems.indices) return false
+        currentWindowIndex = index
+        val item = currentPlaylistItems[index]
+        Log.i(vlcTag, "fallback index=$index uri=${item.uri} title=${item.title}")
+        if (activeBackend === vlcBackend || settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY) {
+            val backend = vlcBackend ?: VlcBackend(appContext, settingsRepo).also { vlcBackend = it }
+            backend.attachSurfaceHolder(boundSurfaceHolder)
+            attachVlcListener(backend)
+            backend.prepare(item.uri, item.headers, startPositionMs)
+            activeBackend = backend
+            Log.i(vlcTag, "playIndex VLC index=$index uri=${item.uri}")
+            return true
+        }
+        exoPlayer?.seekTo(index, startPositionMs)
+        exoPlayer?.prepare()
+        exoPlayer?.play()
+        return true
+    }
+
+    fun next(): Boolean {
+        val target = getCurrentWindowIndex() + 1
+        Log.i(vlcTag, "next current=${getCurrentWindowIndex()} target=$target")
+        return playIndex(target)
+    }
+
+    fun previous(): Boolean {
+        val target = getCurrentWindowIndex() - 1
+        Log.i(vlcTag, "previous current=${getCurrentWindowIndex()} target=$target")
+        return playIndex(target)
+    }
+
     fun releaseActiveBackend() {
         activeBackend?.stop()
         activeBackend?.release()
@@ -720,8 +756,10 @@ class PlayerManager(
         Log.w(vlcTag, "Media3 decoder error detected, starting fallback: ${error.message}")
         val player = exoPlayer ?: return false
         val index = player.currentMediaItemIndex
+        currentWindowIndex = index
         if (index !in currentPlaylistItems.indices) return false
         val item = currentPlaylistItems[index]
+        Log.i(vlcTag, "fallback index=$index uri=${item.uri} title=${item.title}")
         val pos = player.currentPosition
         val indexSaved = player.currentMediaItemIndex
         Log.i(vlcTag, "Fallback start index=$indexSaved positionMs=$pos")

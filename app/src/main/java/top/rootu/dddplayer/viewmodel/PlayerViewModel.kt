@@ -298,6 +298,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _currentPosition.value = playerManager.getPositionMs()
                 }
                 _bufferedPosition.value = playerManager.getBufferedPositionMs()
+                _currentWindowIndex.value = playerManager.getCurrentWindowIndex()
+                _playlistSize.value = playerManager.getPlaylistSize()
+                _hasPrevious.value = playerManager.hasPrevious()
+                _hasNext.value = playerManager.hasNext()
+                val dNow = playerManager.getDurationMs(); if (dNow > 0) _duration.value = dNow
 
                 _bufferedPercentage.value = playerManager.getBufferedPercentage().coerceIn(0, 100)
                 _isBuffering.value = playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING || (_bufferedPercentage.value ?: 0) < 100 && !playerManager.isPlaying()
@@ -1110,11 +1115,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun seekForward() = playerManager.seekForward()
     fun seekBack() = playerManager.seekBack()
     fun seekTo(pos: Long) {
-        val p = player ?: return
-        val from = p.currentPosition
+        val from = playerManager.getPositionMs()
         pendingSeekFromPosition = from
         pendingSeekReason = if (pos > from) "seek_forward" else if (pos < from) "seek_backward" else "seek"
-        p.seekTo(pos)
+        playerManager.seekTo(pos)
         _currentPosition.value = pos
     }
     fun bindSurfaceHolder(holder: SurfaceHolder?) = playerManager.bindSurfaceHolder(holder)
@@ -1125,12 +1129,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun setPlaybackActive(active: Boolean) { if (active) playerManager.play() else playerManager.pause() }
     fun nextTrack() {
-        val p = player ?: return
-        if (p.hasNextMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true, saveSettings = false) }
+        if (playerManager.hasNext()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; playerManager.next(); flushProgress("manual_next", force = true, saveSettings = false) }
     }
     fun prevTrack() {
-        val p = player ?: return
-        if (p.hasPreviousMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true, saveSettings = false) }
+        if (playerManager.hasPrevious()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; playerManager.previous(); flushProgress("manual_previous", force = true, saveSettings = false) }
     }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
