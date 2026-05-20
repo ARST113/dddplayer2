@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.SurfaceHolder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -290,25 +291,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val progressUpdater = object : Runnable {
         override fun run() {
-            val p = playerManager.exoPlayer ?: return
-            if (p.isPlaying || p.isLoading) {
+            val p = playerManager.exoPlayer
+            val isActive = playerManager.isPlaying() || playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING
+            if (isActive) {
                 if (!isUserInteracting) {
-                    _currentPosition.value = p.currentPosition
+                    _currentPosition.value = playerManager.getPositionMs()
                 }
-                _bufferedPosition.value = p.bufferedPosition
+                _bufferedPosition.value = playerManager.getBufferedPositionMs()
 
-                // Логика расчета процента буферизации вперед
-                // (ExoPlayer.bufferedPercentage не подходит,
-                // т.к. он показывает % буфера на прогрессе, а не заполненность буфера)
-                val bufferedDuration = p.bufferedPosition - p.currentPosition
-                val targetBuffer = if (bufferedDuration > 6_000L) 50_000L else 5_000L
-                val maxPercent = if (targetBuffer == 5_000L) 99 else 100
-                val percent = ((bufferedDuration * 101) / targetBuffer).toInt().coerceIn(0, maxPercent)
-                _bufferedPercentage.value = percent
+                _bufferedPercentage.value = playerManager.getBufferedPercentage().coerceIn(0, 100)
+                _isBuffering.value = playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING || (_bufferedPercentage.value ?: 0) < 100 && !playerManager.isPlaying()
 
                 // Если AFR еще не сработал, проверяем формат
                 if (!afrAppliedForCurrentItem) {
-                    val format = p.videoFormat
+                    val format = p?.videoFormat
                     if (format != null) {
                         updateVideoInfoBadge(format) // Обновляем инфо, а он сам решит, запускать ли детектор
                     }
@@ -321,13 +317,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     BridgeEvent.PositionTick(
                         sessionId = bridgeConfig.sessionId,
                         ts = now,
-                        uri = p.currentMediaItem?.localConfiguration?.uri?.toString(),
-                        position = p.currentPosition,
-                        duration = normalizeDuration(p.duration),
-                        bufferedPosition = p.bufferedPosition,
+                        uri = playerManager.getCurrentUri(),
+                        position = playerManager.getPositionMs(),
+                        duration = normalizeDuration(playerManager.getDurationMs()),
+                        bufferedPosition = playerManager.getBufferedPositionMs(),
                         bufferedPercentage = _bufferedPercentage.value,
-                        windowIndex = p.currentMediaItemIndex,
-                        title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+                        windowIndex = playerManager.getCurrentWindowIndex(),
+                        title = playerManager.getCurrentTitle(),
                         reason = "tick"
                     )
                 )
@@ -348,22 +344,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun capturePlaybackSnapshot(reason: String): PlaybackSnapshot {
         val p = player
         val fallback = lastKnownSnapshot
-        if (p == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
+        if (p == null && playerManager.getCurrentUri() == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
             ?: PlaybackSnapshot(bridgeConfig.sessionId, System.currentTimeMillis(), null, null, null, null, null, null, null, null, null, null, reason)
-        val normalizedDuration = normalizeDuration(p.duration)
+        val normalizedDuration = normalizeDuration(playerManager.getDurationMs())
         return PlaybackSnapshot(
             sessionId = bridgeConfig.sessionId,
             ts = System.currentTimeMillis(),
-            uri = p.currentMediaItem?.localConfiguration?.uri?.toString() ?: fallback?.uri,
-            position = normalizePosition(p.currentPosition, normalizedDuration, p.playbackState),
+            uri = playerManager.getCurrentUri() ?: fallback?.uri,
+            position = normalizePosition(playerManager.getPositionMs(), normalizedDuration, p?.playbackState),
             duration = normalizedDuration,
-            bufferedPosition = p.bufferedPosition,
+            bufferedPosition = playerManager.getBufferedPositionMs(),
             bufferedPercentage = _bufferedPercentage.value,
-            windowIndex = p.currentMediaItemIndex,
-            playlistSize = p.mediaItemCount,
-            title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
-            isPlaying = p.isPlaying,
-            playbackState = p.playbackState,
+            windowIndex = playerManager.getCurrentWindowIndex(),
+            playlistSize = playerManager.getPlaylistSize(),
+            title = playerManager.getCurrentTitle(),
+            isPlaying = playerManager.isPlaying(),
+            playbackState = playerManager.getPlaybackStateCompat(),
             reason = reason
         )
     }
@@ -453,7 +449,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     BridgeEvent.PlaybackEnded(
                         sessionId = bridgeConfig.sessionId,
                         ts = System.currentTimeMillis(),
-                        uri = p?.currentMediaItem?.localConfiguration?.uri?.toString(),
+                        uri = playerManager.getCurrentUri(),
                         windowIndex = p?.currentMediaItemIndex ?: 0,
                         playlistSize = p?.mediaItemCount ?: 0,
                         title = p?.currentMediaItem?.mediaMetadata?.title?.toString(),
@@ -486,6 +482,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (playerManager.maybeFallbackToVlcOnError(error)) {
+                return
+            }
             if (tryRecoverFromError(error)) {
                 return
             }
@@ -585,6 +584,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         playerManager.onAudioOutputFormatChanged = { info ->
             _audioOutputInfo.postValue(info)
         }
+        playerManager.onBackendPlayingChanged = { playing ->
+            _isPlaying.postValue(playing)
+            if (playing) {
+                _isBuffering.postValue(false)
+                android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
+                val d = playerManager.getDurationMs()
+                if (d > 0) {
+                    _duration.postValue(d)
+                    android.util.Log.i("DDDPlayer/Backend", "duration update from backend=$d")
+                }
+            }
+            updateProgressUpdaterState()
+        }
+        playerManager.onBackendBufferingChanged = { buffering ->
+            _isBuffering.postValue(buffering)
+            updateProgressUpdaterState()
+        }
+        playerManager.onBackendEnded = {
+            saveCurrentSettings()
+            _playbackEnded.postValue(true)
+            flushProgress("ended", force = true)
+        }
+        playerManager.onBackendError = { err ->
+            saveCurrentSettings()
+            flushProgress(reason = "error", final = true)
+            _fatalError.postValue(err as? PlaybackException)
+            _isPlaying.postValue(false)
+        }
 
         // Инициализируем плеер сразу
         playerManager.initializePlayer()
@@ -598,8 +625,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun updateProgressUpdaterState() {
-        val p = playerManager.exoPlayer ?: return
-        val shouldRun = p.isPlaying || p.playbackState == Player.STATE_BUFFERING
+        val p = playerManager.exoPlayer
+        val shouldRun = playerManager.isPlaying() || p?.playbackState == Player.STATE_BUFFERING || (_isBuffering.value == true)
 
         if (shouldRun) {
             handler.removeCallbacks(progressUpdater)
@@ -1090,7 +1117,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         p.seekTo(pos)
         _currentPosition.value = pos
     }
+    fun bindSurfaceHolder(holder: SurfaceHolder?) = playerManager.bindSurfaceHolder(holder)
+    fun getCurrentPositionMs(): Long = playerManager.getPositionMs()
+    fun getDurationMs(): Long = playerManager.getDurationMs()
+    fun isBackendPlaying(): Boolean = playerManager.isPlaying()
+
     fun togglePlayPause() = playerManager.togglePlayPause()
+    fun setPlaybackActive(active: Boolean) { if (active) playerManager.play() else playerManager.pause() }
     fun nextTrack() {
         val p = player ?: return
         if (p.hasNextMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true, saveSettings = false) }
