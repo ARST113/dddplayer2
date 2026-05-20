@@ -2,10 +2,11 @@ package top.rootu.dddplayer.ui
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,13 +16,13 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
-import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -37,15 +38,10 @@ import kotlinx.coroutines.launch
 import top.rootu.dddplayer.BuildConfig
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.data.SettingsRepository
-import top.rootu.dddplayer.logic.AnaglyphLogic
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
 import top.rootu.dddplayer.model.ResizeMode
-import top.rootu.dddplayer.model.StereoInputType
-import top.rootu.dddplayer.model.StereoOutputMode
-import top.rootu.dddplayer.renderer.OnSurfaceReadyListener
-import top.rootu.dddplayer.renderer.StereoRenderer
 import top.rootu.dddplayer.ui.adapter.SideMenuAdapter
 import top.rootu.dddplayer.ui.controller.PlayerInputHandler
 import top.rootu.dddplayer.ui.controller.PlayerTimerController
@@ -62,7 +58,7 @@ import top.rootu.dddplayer.viewmodel.SettingsViewModel
 import top.rootu.dddplayer.viewmodel.UpdateViewModel
 import kotlin.math.abs
 
-class PlayerFragment : Fragment(), OnSurfaceReadyListener {
+class PlayerFragment : Fragment() {
 
     private var dimJob: Job? = null
     private var zoomDialog: Dialog? = null
@@ -70,7 +66,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
     private val settingsViewModel: SettingsViewModel by viewModels()
     private val updateViewModel: UpdateViewModel by viewModels()
 
-    private var stereoRenderer: StereoRenderer? = null
     private var sideMenuDialog: Dialog? = null
     private var sideMenuAdapter: SideMenuAdapter? = null
 
@@ -117,8 +112,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
     private var currentSwipeTargetIsNext: Boolean? = null
     private var currentSwipeIsExit: Boolean = false
 
-    // Храним ссылку на GL Surface
-    private var glSurface: Surface? = null
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -211,14 +204,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
             true // Поглощаем событие
         }
 
-        // Настройка GL Surface
-        ui.glSurfaceView.setEGLContextClientVersion(2)
-        ui.glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-
-        stereoRenderer = StereoRenderer(ui.glSurfaceView, this)
-        ui.glSurfaceView.setRenderer(stereoRenderer)
-        ui.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-
         return view
     }
 
@@ -243,16 +228,7 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
     }
 
     private fun attachSurfaceToPlayer(player: Player) {
-        // Проверяем текущий режим, чтобы привязать нужную поверхность
-        if (viewModel.inputType.value != StereoInputType.NONE) {
-            // 3D режим -> GL Surface
-            if (glSurface != null) {
-                player.setVideoSurface(glSurface)
-            }
-        } else {
-            // 2D режим -> Standard SurfaceView
-            player.setVideoSurfaceView(ui.standardSurfaceView)
-        }
+        player.setVideoSurfaceView(ui.standardSurfaceView)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -613,8 +589,44 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
                     sideMenuDialog?.dismiss()
                     startActivity(Intent(requireContext(), GlobalSettingsActivity::class.java))
                 }
+                "audio_restore_debug" -> {
+                    sideMenuDialog?.dismiss()
+                    showAudioRestoreDebugDialog()
+                }
+                "audio_restore_debug_toggle" -> {
+                    viewModel.toggleShowAudioRestoreDebug()
+                    Toast.makeText(requireContext(), if (viewModel.isShowAudioRestoreDebugEnabled()) "Audio restore debug: ON" else "Audio restore debug: OFF", Toast.LENGTH_SHORT).show()
+                    showMainMenu("audio_restore_debug_toggle")
+                }
             }
         }
+    }
+
+    private fun showAudioRestoreDebugDialog() {
+        val text = viewModel.getAudioRestoreDebugText()
+        val tv = TextView(requireContext()).apply {
+            this.text = text
+            setPadding(24, 24, 24, 24)
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val scroll = android.widget.ScrollView(requireContext()).apply { addView(tv) }
+        AlertDialog.Builder(requireContext())
+            .setTitle("Диагностика аудио")
+            .setView(scroll)
+            .setPositiveButton("Закрыть", null)
+            .setNeutralButton("Скопировать") { _, _ ->
+                val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("audio_restore_debug", text))
+                Toast.makeText(requireContext(), "Скопировано", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Поделиться") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }, "Поделиться диагностикой"))
+            }
+            .show()
     }
 
     private fun showAudioTrackMenu() {
@@ -1001,12 +1013,12 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
 
         viewModel.isBuffering.observe(viewLifecycleOwner) { isBuffering ->
             val percent = viewModel.bufferedPercentage.value ?: 0
-            ui.updateBufferingState(isBuffering, viewModel.outputMode.value, percent)
+            ui.updateBufferingState(isBuffering, percent)
         }
 
         viewModel.bufferedPercentage.observe(viewLifecycleOwner) { percent ->
             if (viewModel.isBuffering.value == true) {
-                ui.updateBufferingState(true, viewModel.outputMode.value, percent)
+                ui.updateBufferingState(true, percent)
             }
         }
 
@@ -1014,48 +1026,8 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
             ui.seekBar.secondaryProgress = bufferedPos.toInt()
         }
 
-        // Переключение поверхностей (HDR Fix)
-        viewModel.inputType.observe(viewLifecycleOwner) { type ->
-            val isStereo = type != StereoInputType.NONE
-            ui.setSurfaceMode(isStereo)
-            viewModel.player?.let { player ->
-                if (isStereo) {
-                    ui.glSurfaceView.onResume()
-                    stereoRenderer?.setInputType(type)
-                    if (glSurface != null) player.setVideoSurface(glSurface)
-                } else {
-                    ui.glSurfaceView.onPause()
-                    player.setVideoSurfaceView(ui.standardSurfaceView)
-                }
-            }
-            ui.updateStereoLayout(viewModel.outputMode.value, viewModel.screenSeparation.value ?: 0f)
-            ui.updateInputModeIcon(type, viewModel.swapEyes.value ?: false)
-        }
-
-        // Обновление рендерера
-        viewModel.swapEyes.observe(viewLifecycleOwner) { swap ->
-            stereoRenderer?.setSwapEyes(swap)
-            ui.iconSwapEyes.alpha = if (swap) 1.0f else 0.3f
-            ui.updateInputModeIcon(viewModel.inputType.value ?: StereoInputType.NONE, swap)
-        }
-        viewModel.outputMode.observe(viewLifecycleOwner) { mode ->
-            stereoRenderer?.setOutputMode(mode)
-            ui.updateStereoLayout(mode, viewModel.screenSeparation.value ?: 0f)
-        }
-        viewModel.anaglyphType.observe(viewLifecycleOwner) { stereoRenderer?.setAnaglyphType(it) }
-        viewModel.singleFrameSize.observe(viewLifecycleOwner) { (w, h) -> stereoRenderer?.setSingleFrameDimensions(w, h) }
-        viewModel.depth.observe(viewLifecycleOwner) { stereoRenderer?.setDepth(it) }
-        viewModel.screenSeparation.observe(viewLifecycleOwner) {
-            stereoRenderer?.setScreenSeparation(it)
-            ui.updateStereoLayout(viewModel.outputMode.value, it)
-        }
-
-        // VR параметры через делегат
-        viewModel.anaglyphDelegate.vrK1.observe(viewLifecycleOwner) { updateVrParams() }
-        viewModel.anaglyphDelegate.vrK2.observe(viewLifecycleOwner) { updateVrParams() }
-        viewModel.anaglyphDelegate.vrScale.observe(viewLifecycleOwner) { updateVrParams() }
-
-        viewModel.anaglyphDelegate.currentMatrices.observe(viewLifecycleOwner) { (l, r) -> stereoRenderer?.setAnaglyphMatrices(l, r) }
+        ui.setSurfaceMode()
+        viewModel.player?.setVideoSurfaceView(ui.standardSurfaceView)
 
         // Панель настроек (SettingsViewModel)
         settingsViewModel.isSettingsPanelVisible.observe(viewLifecycleOwner) { isVisible ->
@@ -1075,19 +1047,7 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         settingsViewModel.currentSettingType.observe(viewLifecycleOwner, updateTextObserver)
 
         // Наблюдаем за всеми параметрами, которые могут изменить текст в OSD
-        viewModel.inputType.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.outputMode.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphType.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.swapEyes.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.depth.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.screenSeparation.observe(viewLifecycleOwner, updateTextObserver)
-
-        viewModel.anaglyphDelegate.customHueOffsetL.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphDelegate.customHueOffsetR.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphDelegate.customLeakL.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphDelegate.customLeakR.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphDelegate.customSpaceLms.observe(viewLifecycleOwner, updateTextObserver)
-        viewModel.anaglyphDelegate.isMatrixValid.observe(viewLifecycleOwner, updateTextObserver)
+        viewModel.resizeMode.observe(viewLifecycleOwner, updateTextObserver)
 
         viewModel.cues.observe(viewLifecycleOwner) { cues ->
             ui.subtitleView.setCues(cues)
@@ -1213,56 +1173,16 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         btnResume.requestFocus()
     }
 
-    private fun updateVrParams() {
-        stereoRenderer?.setDistortion(
-            viewModel.anaglyphDelegate.vrK1.value ?: 0.34f,
-            viewModel.anaglyphDelegate.vrK2.value ?: 0.10f,
-            viewModel.anaglyphDelegate.vrScale.value ?: 1.2f
-        )
-        updateSettingsText()
-    }
-
     private fun updateSettingsText() {
         if (settingsViewModel.isSettingsPanelVisible.value != true) return
         val type = settingsViewModel.currentSettingType.value ?: return
         val context = requireContext()
 
         val valueStr = when(type) {
-            SettingType.VIDEO_TYPE -> {
-                val inputType = viewModel.inputType.value ?: StereoInputType.NONE
-                // Получаем список локализованных строк из ViewModel (которая теперь использует контекст Fragment)
-                viewModel.getOptionsForSetting(type, context)?.first?.getOrNull(inputType.ordinal) ?: inputType.name.replace("_", " ")
-            }
-            SettingType.OUTPUT_FORMAT -> {
-                val outputMode = viewModel.outputMode.value ?: StereoOutputMode.ANAGLYPH
-                viewModel.getOptionsForSetting(type, context)?.first?.getOrNull(outputMode.ordinal) ?: outputMode.name.replace("_", " ")
-            }
-            SettingType.GLASSES_TYPE -> {
-                val group = AnaglyphLogic.getGlassesGroup(viewModel.anaglyphType.value!!)
-                viewModel.getOptionsForSetting(type, context)?.first?.getOrNull(group.ordinal) ?: group.name.replace("_", " ")
-            }
-            SettingType.FILTER_MODE -> {
-                val name = viewModel.anaglyphType.value?.name ?: ""
-                if (name.endsWith("_CUSTOM")) getString(R.string.val_custom) else name
-            }
-            SettingType.CUSTOM_HUE_L -> {
-                val offset = viewModel.anaglyphDelegate.customHueOffsetL.value ?: 0
-                val color = viewModel.anaglyphDelegate.calculatedColorL.value ?: android.graphics.Color.WHITE
-                getString(R.string.custom_hue_format, offset, String.format("#%06X", (0xFFFFFF and color)))
-            }
-            SettingType.CUSTOM_HUE_R -> {
-                val offset = viewModel.anaglyphDelegate.customHueOffsetR.value ?: 0
-                val color = viewModel.anaglyphDelegate.calculatedColorR.value ?: android.graphics.Color.WHITE
-                getString(R.string.custom_hue_format, offset, String.format("#%06X", (0xFFFFFF and color)))
-            }
-            SettingType.CUSTOM_LEAK_L -> getString(R.string.custom_leak_format, (viewModel.anaglyphDelegate.customLeakL.value!! * 100).toInt())
-            SettingType.CUSTOM_LEAK_R -> getString(R.string.custom_leak_format, (viewModel.anaglyphDelegate.customLeakR.value!! * 100).toInt())
-            SettingType.CUSTOM_SPACE -> if (viewModel.anaglyphDelegate.customSpaceLms.value == true) "LMS" else "XYZ"
-            SettingType.SWAP_EYES -> if (viewModel.swapEyes.value == true) getString(R.string.val_swap_rl) else getString(R.string.val_swap_lr)
-            SettingType.DEPTH_3D -> viewModel.depth.value.toString()
-            SettingType.SCREEN_SEPARATION -> getString(R.string.screen_separation_format, (viewModel.screenSeparation.value ?: 0f) * 100)
-            SettingType.VR_DISTORTION -> getString(R.string.vr_distortion_format, viewModel.anaglyphDelegate.vrK1.value)
-            SettingType.VR_ZOOM -> getString(R.string.vr_zoom_format, viewModel.anaglyphDelegate.vrScale.value)
+            SettingType.VIDEO_TYPE, SettingType.OUTPUT_FORMAT, SettingType.GLASSES_TYPE, SettingType.FILTER_MODE,
+            SettingType.CUSTOM_HUE_L, SettingType.CUSTOM_HUE_R, SettingType.CUSTOM_LEAK_L, SettingType.CUSTOM_LEAK_R,
+            SettingType.CUSTOM_SPACE, SettingType.SWAP_EYES, SettingType.DEPTH_3D, SettingType.SCREEN_SEPARATION,
+            SettingType.VR_DISTORTION, SettingType.VR_ZOOM -> "-"
             SettingType.AUDIO_TRACK -> {
                 val track = viewModel.currentAudioTrack.value
                 track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
@@ -1273,13 +1193,8 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
             }
         }
 
-        val color = when(type) {
-            SettingType.CUSTOM_HUE_L -> viewModel.anaglyphDelegate.calculatedColorL.value ?: android.graphics.Color.WHITE
-            SettingType.CUSTOM_HUE_R -> viewModel.anaglyphDelegate.calculatedColorR.value ?: android.graphics.Color.WHITE
-            else -> android.graphics.Color.WHITE
-        }
-
-        ui.updateSettingsText(type, valueStr, viewModel.anaglyphDelegate.isMatrixValid.value ?: true, color)
+        val color = android.graphics.Color.WHITE
+        ui.updateSettingsText(type, valueStr, true, color)
 
         // список опций
         val optionsData = viewModel.getOptionsForSetting(type, context)
@@ -1353,15 +1268,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         })
     }
 
-    override fun onSurfaceReady(surface: Surface) {
-        this.glSurface = surface
-        viewModel.player?.let { player ->
-            if (viewModel.inputType.value != StereoInputType.NONE) {
-                activity?.runOnUiThread { player.setVideoSurface(surface) }
-            }
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         // Обновляем настройку свайпа при возврате на экран
@@ -1374,16 +1280,12 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         // Проверяем, нужно ли перезапустить плеер из-за смены настроек
         viewModel.checkSettingsAndRestart()
         viewModel.player?.playWhenReady = true
-        if (viewModel.inputType.value != StereoInputType.NONE) {
-            ui.glSurfaceView.onResume()
-        }
     }
 
     override fun onPause() {
         super.onPause()
         viewModel.saveCurrentSettings()
         viewModel.player?.playWhenReady = false
-        ui.glSurfaceView.onPause()
     }
 
     override fun onDestroyView() {
@@ -1395,10 +1297,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         inputHandler.cleanup()
         doubleTapResetHandler.removeCallbacksAndMessages(null)
 
-        // Освобождаем GL ресурсы
-        stereoRenderer?.release()
-        stereoRenderer = null
-        glSurface = null
 
         // Восстанавливаем оригинальный режим ТВ при выходе
         activity?.let {

@@ -347,25 +347,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Activity для настройки VR профиля (прозрачная тема) -->
-        <activity
-            android:name=".ui.VrConfigActivity"
-            android:theme="@style/Theme.AppCompat.DayNight.Dialog.Alert"
-            android:exported="true"
-            android:excludeFromRecents="true"
-            android:taskAffinity="">
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="google.com" />
-                <data android:host="www.google.com" />
-                <data android:pathPrefix="/cardboard/cfg" />
-            </intent-filter>
-        </activity>
         <activity
             android:name=".ui.GlobalSettingsActivity"
             android:exported="false"
@@ -378,12 +359,12 @@
             android:process=":crash" /> <!-- Отдельный процесс, чтобы гарантированно запуститься -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.provider"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/provider_paths" />
+                android:resource="@xml/file_paths" />
         </provider>
     </application>
 

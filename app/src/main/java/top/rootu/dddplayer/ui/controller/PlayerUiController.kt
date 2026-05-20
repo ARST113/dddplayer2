@@ -29,9 +29,6 @@ import coil.load
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.ResizeMode
-import top.rootu.dddplayer.model.StereoInputType
-import top.rootu.dddplayer.model.StereoOutputMode
-import top.rootu.dddplayer.renderer.StereoGLSurfaceView
 import top.rootu.dddplayer.ui.adapter.OptionsAdapter
 import top.rootu.dddplayer.ui.adapter.PlaylistAdapter
 import top.rootu.dddplayer.ui.widget.OutlineTextClock
@@ -46,7 +43,6 @@ class PlayerUiController(private val rootView: View) {
     // Surfaces & Containers
     val aspectRatioFrame: AspectRatioFrameLayout = rootView.findViewById(R.id.aspect_ratio_frame)
     val standardSurfaceView: SurfaceView = rootView.findViewById(R.id.surface_view_standard)
-    val glSurfaceView: StereoGLSurfaceView = rootView.findViewById(R.id.gl_surface_view)
 
     // Views
     val dimOverlay: View = rootView.findViewById(R.id.dim_overlay)
@@ -503,14 +499,8 @@ class PlayerUiController(private val rootView: View) {
         }
     }
 
-    fun setSurfaceMode(isStereo: Boolean) {
-        if (isStereo) {
-            aspectRatioFrame.visibility = View.GONE
-            glSurfaceView.visibility = View.VISIBLE
-        } else {
-            aspectRatioFrame.visibility = View.VISIBLE
-            glSurfaceView.visibility = View.GONE
-        }
+    fun setSurfaceMode() {
+        aspectRatioFrame.visibility = View.VISIBLE
     }
 
     fun setAspectRatio(ratio: Float) {
@@ -676,61 +666,22 @@ class PlayerUiController(private val rootView: View) {
             SettingType.SWAP_EYES -> context.getString(R.string.setting_swap_eyes)
             SettingType.DEPTH_3D -> context.getString(R.string.setting_depth)
             SettingType.SCREEN_SEPARATION -> context.getString(R.string.setting_screen_separation)
-            SettingType.VR_DISTORTION -> context.getString(R.string.setting_vr_distortion)
-            SettingType.VR_ZOOM -> context.getString(R.string.setting_vr_zoom)
+            SettingType.VR_DISTORTION -> "VR_DISTORTION"
+            SettingType.VR_ZOOM -> "VR_ZOOM"
             SettingType.AUDIO_TRACK -> context.getString(R.string.setting_audio_track)
             SettingType.SUBTITLES -> context.getString(R.string.setting_subtitles)
         }
     }
 
-    fun updateBufferingState(isBuffering: Boolean, mode: StereoOutputMode?, percent: Int) {
+    fun updateBufferingState(isBuffering: Boolean, percent: Int) {
         if (isBuffering) {
-            if (mode == StereoOutputMode.CARDBOARD_VR && glSurfaceView.isVisible) {
-                bufferingContainer.isVisible = false
-                bufferingSplitContainer.isVisible = true
-            } else {
-                bufferingContainer.isVisible = true
-                bufferingSplitContainer.isVisible = false
-                bufferingPercentage.text = rootView.context.getString(R.string.percentage_int_format, percent)
-            }
+            bufferingContainer.isVisible = true
+            bufferingSplitContainer.isVisible = false
+            bufferingPercentage.text = rootView.context.getString(R.string.percentage_int_format, percent)
         } else {
             bufferingContainer.isVisible = false
             bufferingSplitContainer.isVisible = false
         }
-    }
-
-    fun updateStereoLayout(mode: StereoOutputMode?, separation: Float) {
-        if (!glSurfaceView.isVisible) {
-            subtitleView.isVisible = true
-            subtitleSplitContainer.isVisible = false
-            return
-        }
-
-        if (mode == StereoOutputMode.CARDBOARD_VR) {
-            subtitleView.isVisible = false
-            subtitleSplitContainer.isVisible = true
-        } else {
-            subtitleView.isVisible = true
-            subtitleSplitContainer.isVisible = false
-        }
-
-        val screenWidth = rootView.resources.displayMetrics.widthPixels
-        val shiftPx = separation * screenWidth
-        subtitleViewLeft.translationX = -shiftPx
-        subtitleViewRight.translationX = shiftPx
-        loaderLeft.translationX = -shiftPx
-        loaderRight.translationX = shiftPx
-    }
-
-    fun updateInputModeIcon(type: StereoInputType, swapEyes: Boolean) {
-        val iconRes = when (type) {
-            StereoInputType.NONE -> R.drawable.ic_input_mode_mono
-            StereoInputType.SIDE_BY_SIDE -> if (swapEyes) R.drawable.ic_input_mode_ss_rl else R.drawable.ic_input_mode_ss_lr
-            StereoInputType.TOP_BOTTOM -> if (swapEyes) R.drawable.ic_input_mode_ou_rl else R.drawable.ic_input_mode_ou_lr
-            StereoInputType.INTERLACED -> R.drawable.ic_input_mode_interlaced
-            StereoInputType.TILED_1080P -> R.drawable.ic_input_mode_3dz
-        }
-        iconInputMode.setImageResource(iconRes)
     }
 
     fun formatTime(millis: Long): String {
