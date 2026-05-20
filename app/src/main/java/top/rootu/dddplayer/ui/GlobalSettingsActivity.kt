@@ -13,7 +13,6 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -73,8 +72,6 @@ class GlobalSettingsActivity : AppCompatActivity() {
     private lateinit var textAudioLangValue: TextView
     private lateinit var itemSubLang: LinearLayout
     private lateinit var textSubLangValue: TextView
-    private lateinit var itemCalibrateVr: LinearLayout
-    private lateinit var itemCalibrateAnaglyph: LinearLayout
     private lateinit var itemDownmix: LinearLayout
     private lateinit var switchDownmix: SwitchCompat
     private lateinit var itemDownmixConfig: LinearLayout
@@ -174,9 +171,7 @@ class GlobalSettingsActivity : AppCompatActivity() {
         textAudioLangValue = findViewById(R.id.text_audio_lang_value)
         itemSubLang = findViewById(R.id.item_sub_lang)
         textSubLangValue = findViewById(R.id.text_sub_lang_value)
-        itemCalibrateVr = findViewById(R.id.item_calibrate_vr)
-        itemCalibrateAnaglyph = findViewById(R.id.item_calibrate_anaglyph)
-        itemDownmix = findViewById(R.id.item_downmix)
+                        itemDownmix = findViewById(R.id.item_downmix)
         switchDownmix = findViewById(R.id.switch_downmix)
         itemDownmixConfig = findViewById(R.id.item_downmix_config)
         itemUpAction = findViewById(R.id.item_up_action)
@@ -256,14 +251,6 @@ class GlobalSettingsActivity : AppCompatActivity() {
 
         // Boost
         itemBoost.setOnClickListener { settingsViewModel.cycleLoudnessBoost() }
-
-        // Calibration (Placeholder)
-        itemCalibrateVr.setOnClickListener {
-            Toast.makeText(applicationContext, getString(R.string.develop_tost), Toast.LENGTH_SHORT).show()
-        }
-        itemCalibrateAnaglyph.setOnClickListener {
-            Toast.makeText(applicationContext, getString(R.string.develop_tost), Toast.LENGTH_SHORT).show()
-        }
 
         // Crash Test
         var crashCounter = 0

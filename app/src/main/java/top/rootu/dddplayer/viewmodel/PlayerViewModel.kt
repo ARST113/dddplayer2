@@ -31,24 +31,60 @@ import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeEvent
 import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.data.VideoSettings
-import top.rootu.dddplayer.logic.AnaglyphLogic
 import top.rootu.dddplayer.logic.SettingsMutator
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
 import top.rootu.dddplayer.model.ResizeMode
-import top.rootu.dddplayer.model.StereoInputType
-import top.rootu.dddplayer.model.StereoOutputMode
 import top.rootu.dddplayer.player.PlayerManager
-import top.rootu.dddplayer.renderer.StereoRenderer
 import top.rootu.dddplayer.utils.MediaFormatHelper
-import top.rootu.dddplayer.utils.StereoTypeDetector
 import top.rootu.dddplayer.utils.afr.RuntimeFpsDetector
 import top.rootu.dddplayer.utils.getString
 import androidx.media3.common.MediaItem as Media3MediaItem
 import java.util.concurrent.atomic.AtomicBoolean
 
+
+enum class StereoInputType { NONE, SIDE_BY_SIDE, TOP_BOTTOM, INTERLACED, TILED_1080P }
+enum class StereoOutputMode { ANAGLYPH, LEFT_ONLY, RIGHT_ONLY, CARDBOARD_VR }
+enum class AnaglyphType { RC_DUBOIS, RC_CUSTOM, YB_CUSTOM, GM_CUSTOM }
+
+object AnaglyphLogic {
+    fun isCustomType(type: AnaglyphType) = false
+    fun getGlassesGroup(type: AnaglyphType) = GlassesGroup.RED_CYAN
+    fun getFiltersForGroup(group: GlassesGroup): List<AnaglyphType> = listOf(AnaglyphType.RC_DUBOIS)
+}
+
+object StereoTypeDetector {
+    fun detect(format: Format?, uri: android.net.Uri?): StereoInputType = StereoInputType.NONE
+}
+
+class AnaglyphDelegate(private val repository: SettingsRepository) {
+    private val _vrK1 = MutableLiveData(0.34f); val vrK1: LiveData<Float> = _vrK1
+    private val _vrK2 = MutableLiveData(0.10f); val vrK2: LiveData<Float> = _vrK2
+    private val _vrScale = MutableLiveData(1.2f); val vrScale: LiveData<Float> = _vrScale
+    private val _currentMatrices = MutableLiveData(Pair(floatArrayOf(), floatArrayOf())); val currentMatrices: LiveData<Pair<FloatArray, FloatArray>> = _currentMatrices
+    private val _customHueOffsetL = MutableLiveData(0); val customHueOffsetL: LiveData<Int> = _customHueOffsetL
+    private val _customHueOffsetR = MutableLiveData(0); val customHueOffsetR: LiveData<Int> = _customHueOffsetR
+    private val _customLeakL = MutableLiveData(0f); val customLeakL: LiveData<Float> = _customLeakL
+    private val _customLeakR = MutableLiveData(0f); val customLeakR: LiveData<Float> = _customLeakR
+    private val _customSpaceLms = MutableLiveData(false); val customSpaceLms: LiveData<Boolean> = _customSpaceLms
+    private val _isMatrixValid = MutableLiveData(true); val isMatrixValid: LiveData<Boolean> = _isMatrixValid
+    private val _calculatedColorL = MutableLiveData(android.graphics.Color.WHITE); val calculatedColorL: LiveData<Int> = _calculatedColorL
+    private val _calculatedColorR = MutableLiveData(android.graphics.Color.WHITE); val calculatedColorR: LiveData<Int> = _calculatedColorR
+    fun loadCustomSettings(anaglyphType: AnaglyphType) {}
+    fun updateAnaglyphMatrix(anaglyphType: AnaglyphType) {}
+    fun loadGlobalVrParams() {}
+    fun saveGlobalVrParams() {}
+    fun saveCustomSettings(anaglyphType: AnaglyphType) {}
+    fun setCustomHueL(v:Int){_customHueOffsetL.value=v}
+    fun setCustomHueR(v:Int){_customHueOffsetR.value=v}
+    fun setCustomLeakL(v:Float){_customLeakL.value=v}
+    fun setCustomLeakR(v:Float){_customLeakR.value=v}
+    fun setCustomSpaceLms(v:Boolean){_customSpaceLms.value=v}
+    fun setVrK1(v:Float){_vrK1.value=v}
+    fun setVrScale(v:Float){_vrScale.value=v}
+}
 // --- Enums & Data Classes ---
 enum class SettingType {
     VIDEO_TYPE, OUTPUT_FORMAT, GLASSES_TYPE, FILTER_MODE,
@@ -231,8 +267,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val inputType: LiveData<StereoInputType> = _inputType
     private val _outputMode = MutableLiveData(StereoOutputMode.ANAGLYPH)
     val outputMode: LiveData<StereoOutputMode> = _outputMode
-    private val _anaglyphType = MutableLiveData(StereoRenderer.AnaglyphType.RC_DUBOIS)
-    val anaglyphType: LiveData<StereoRenderer.AnaglyphType> = _anaglyphType
+    private val _anaglyphType = MutableLiveData(AnaglyphType.RC_DUBOIS)
+    val anaglyphType: LiveData<AnaglyphType> = _anaglyphType
     private val _swapEyes = MutableLiveData(false)
     val swapEyes: LiveData<Boolean> = _swapEyes
 
@@ -1198,12 +1234,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // --- Settings Logic ---
 
     private fun loadGlobalDefaults() {
-        val outModeOrd = repository.getGlobalInt("def_output_mode", StereoOutputMode.ANAGLYPH.ordinal)
-        val outputMode = StereoOutputMode.entries.getOrNull(outModeOrd) ?: StereoOutputMode.ANAGLYPH
+        val outputMode = StereoOutputMode.ANAGLYPH
         _outputMode.postValue(outputMode)
 
-        val anaTypeOrd = repository.getGlobalInt("def_anaglyph_type", StereoRenderer.AnaglyphType.RC_DUBOIS.ordinal)
-        val anaglyphType = StereoRenderer.AnaglyphType.entries.getOrNull(anaTypeOrd) ?: StereoRenderer.AnaglyphType.RC_DUBOIS
+        val anaglyphType = AnaglyphType.RC_DUBOIS
         _anaglyphType.postValue(anaglyphType)
 
         _screenSeparation.postValue(repository.getGlobalFloat("global_screen_separation_pct", 0f))
@@ -1230,9 +1264,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         else _currentSubtitleTrack.value?.format?.id
 
         val settings = VideoSettings(
-            uri, System.currentTimeMillis(),
-            _inputType.value!!, _outputMode.value!!, _anaglyphType.value!!,
-            _swapEyes.value!!, _depth.value!!,
+            uri = uri,
+            lastUpdated = System.currentTimeMillis(),
             lastPosition = positionToSave,
             duration = p.duration.coerceAtLeast(0L),
             audioTrackId = audioId,
@@ -1240,7 +1273,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
         viewModelScope.launch { repository.saveVideoSettings(settings) }
 
-        repository.saveGlobalDefaults(settings.outputMode, settings.anaglyphType)
         repository.putGlobalFloat("global_screen_separation_pct", _screenSeparation.value!!)
         anaglyphDelegate.saveGlobalVrParams()
 
@@ -1250,8 +1282,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun prepareSettingsPanel() {
         // Создаем копию текущих настроек для отката
         backupSettings = VideoSettings(
-            "", 0, _inputType.value!!, _outputMode.value!!,
-            _anaglyphType.value!!, _swapEyes.value!!, _depth.value!!
+            uri = "",
+            lastUpdated = 0,
+            lastPosition = 0L,
+            duration = 0L
         )
         updateAvailableSettings()
     }
@@ -1262,18 +1296,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun applySettings(s: VideoSettings) {
-        _inputType.postValue(s.inputType)
-        _outputMode.postValue(s.outputMode)
-        _anaglyphType.postValue(s.anaglyphType)
-        _swapEyes.postValue(s.swapEyes)
-        _depth.postValue(s.depth)
-
         anaglyphDelegate.loadGlobalVrParams()
-
-        handler.post { lastVideoSize?.let { calculateFrameSize(s.inputType, it) } }
-        if (AnaglyphLogic.isCustomType(s.anaglyphType)) anaglyphDelegate.loadCustomSettings(s.anaglyphType)
         updateAvailableSettings()
-        anaglyphDelegate.updateAnaglyphMatrix(s.anaglyphType)
     }
 
     // --- Menu Generation ---
@@ -1928,15 +1952,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _singleFrameSize.value = Pair(finalFrameWidth, finalFrameHeight)
     }
 
-    private fun savePreferredFilter(type: StereoRenderer.AnaglyphType) {
+    private fun savePreferredFilter(type: AnaglyphType) {
         val group = AnaglyphLogic.getGlassesGroup(type)
         repository.putGlobalInt("pref_filter_${group.name}", type.ordinal)
     }
 
-    private fun getPreferredFilter(group: GlassesGroup): StereoRenderer.AnaglyphType {
+    private fun getPreferredFilter(group: GlassesGroup): AnaglyphType {
         val savedOrdinal = repository.getGlobalInt("pref_filter_${group.name}", -1)
         if (savedOrdinal != -1) {
-            val values = StereoRenderer.AnaglyphType.entries.toTypedArray()
+            val values = AnaglyphType.entries.toTypedArray()
             if (savedOrdinal in values.indices) {
                 val savedType = values[savedOrdinal]
                 if (AnaglyphLogic.getGlassesGroup(savedType) == group) return savedType

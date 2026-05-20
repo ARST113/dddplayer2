@@ -11,7 +11,6 @@ data class MediaItem(
     val headers: Map<String, String> = emptyMap(),
     val subtitles: List<SubtitleItem> = emptyList(),
     val startPositionMs: Long = 0,
-    val stereoType: StereoInputType = StereoInputType.NONE,
     // Уникальный ID для DiffUtil, генерируется автоматически при создании объекта
     val uuid: String = UUID.randomUUID().toString()
 )
