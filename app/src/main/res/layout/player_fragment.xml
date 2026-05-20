@@ -26,13 +26,6 @@
 
     </androidx.media3.ui.AspectRatioFrameLayout>
 
-    <!-- 2. OpenGL SurfaceView для 3D/VR/Анаглифа -->
-    <top.rootu.dddplayer.renderer.StereoGLSurfaceView
-        android:id="@+id/gl_surface_view"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone"/>
-
     <!-- Слой субтитров (Одиночный) -->
     <androidx.media3.ui.SubtitleView
         android:id="@+id/subtitle_view"
@@ -41,30 +34,6 @@
         android:background="@color/transparent"
         android:visibility="visible"/>
 
-    <!-- Слой субтитров (Двойной - для Cardboard VR) -->
-    <LinearLayout
-        android:id="@+id/subtitle_split_container"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="horizontal"
-        android:weightSum="2"
-        android:visibility="gone"
-        android:baselineAligned="false">
-
-        <androidx.media3.ui.SubtitleView
-            android:id="@+id/subtitle_view_left"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@color/transparent" />
-
-        <androidx.media3.ui.SubtitleView
-            android:id="@+id/subtitle_view_right"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@color/transparent" />
-    </LinearLayout>
 
     <!-- Одиночные часы в правом верхнем углу (с черным контуром) -->
     <top.rootu.dddplayer.ui.widget.OutlineTextClock
