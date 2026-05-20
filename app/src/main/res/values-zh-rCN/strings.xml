@@ -30,50 +30,20 @@
     <string name="resize_mode_fill">拉伸</string>
     <string name="resize_mode_fill_desc">全屏填充（忽略比例）</string>
 
-    <!-- 3D 模式 -->
-    <string name="stereo_mode_mono">普通 2D</string>
-    <string name="stereo_mode_sbs">左右格式 (SBS)</string>
-    <string name="stereo_mode_tb">上下格式 (OU)</string>
-    <string name="stereo_mode_interlaced">交错格式</string>
-    <string name="stereo_mode_tiled">3D(z) 平铺 (1080p 中的 720p)</string>
-    <string name="output_mode_anaglyph">红蓝眼镜</string>
-    <string name="output_mode_left">仅左眼</string>
-    <string name="output_mode_right">仅右眼</string>
-    <string name="output_mode_vr">Cardboard VR</string>
-    <string name="glasses_rc">红 - 青</string>
-    <string name="glasses_yb">黄 - 蓝</string>
-    <string name="glasses_gm">绿 - 品红</string>
-    <string name="glasses_rb">红 - 蓝</string>
+    <!-- 旧播放模式标签（兼容保留） -->
 
     <!-- OSD 设置标题 -->
-    <string name="setting_video_type">视频类型</string>
-    <string name="setting_output_format">观看模式</string>
-    <string name="setting_glasses_type">眼镜类型</string>
-    <string name="setting_filter">算法</string>
-    <string name="setting_swap_eyes">交换左右眼</string>
-    <string name="setting_depth">视差</string>
-    <string name="setting_screen_separation">瞳距 (IPD)</string>
-    <string name="setting_vr_distortion">畸变 (K1)</string>
-    <string name="setting_vr_zoom">VR 缩放</string>
     <string name="setting_audio_track">音轨</string>
     <string name="setting_subtitles">字幕</string>
-    <string name="setting_hue_l">色相 (左)</string>
-    <string name="setting_hue_r">色相 (右)</string>
-    <string name="setting_leak_l">漏光 (左)</string>
-    <string name="setting_leak_r">漏光 (右)</string>
-    <string name="setting_space">色彩空间</string>
 
     <!-- OSD 设置值 -->
-    <string name="val_custom">自定义</string>
-    <string name="val_swap_rl">右 - 左</string>
-    <string name="val_swap_lr">左 - 右</string>
 
     <!-- 侧边菜单 -->
     <string name="menu_main_title">设置</string>
     <string name="menu_audio_title">音轨 (%d)</string>
     <string name="menu_subtitle_title">字幕 (%d)</string>
     <string name="menu_quick_settings_title">快捷设置面板</string>
-    <string name="menu_quick_settings_desc">3D、视差、眼镜…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">全局设置</string>
     <string name="menu_global_settings_desc">解码器、语言、界面…</string>
     <string name="playlist">播放列表</string>
@@ -145,11 +115,9 @@
     <string name="pref_language_track_device">设备语言</string>
     <string name="pref_sub_lang_default">默认字幕语言</string>
     <string name="pref_sub_lang_default_desc">首选字幕（如果可用）</string>
-    <string name="pref_calibration_3d">3D 校准</string>
-    <string name="pref_cardboard_vr">Cardboard VR 设置</string>
-    <string name="pref_cardboard_vr_desc">镜头、缩放和 IPD 设置向导</string>
-    <string name="pref_anaglyph">红蓝眼镜设置</string>
-    <string name="pref_anaglyph_desc">眼镜类型检测和色彩校正</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
+    <string name="pref_cardboard_vr_desc">General playback and display options</string>
     <string name="pref_sec_app">应用</string>
     <string name="pref_language_system">使用系统语言</string>
     <string name="pref_up_action">"上"键操作</string>
@@ -225,8 +193,5 @@
     <string name="qr_code">二维码</string>
 
     <!-- VR 配置 -->
-    <string name="vr_config_title">VR 设置</string>
-    <string name="vr_config_success">Cardboard 配置文件已成功应用！\n\nK1: %1$.3f\nK2: %2$.3f</string>
-    <string name="vr_config_error">读取 Cardboard 配置文件时出错。</string>
     <string name="pref_app_language_desc">切换应用语言。此更改需要重启应用。</string>
 </resources>

@@ -20,43 +20,13 @@
     <string name="time_ends_at">Конец в %s</string>
     <string name="top_panel_help_text">▲▼ выбор • OK сохр • BACK отмена</string>
 
-    <!-- Режимы 3D -->
-    <string name="stereo_mode_mono">Обычное 2D</string>
-    <string name="stereo_mode_sbs">Горизонтальная стереопара (SBS)</string>
-    <string name="stereo_mode_tb">Вертикальная стереопара (OU)</string>
-    <string name="stereo_mode_interlaced">Чересстрочная стереопара (Interlaced)</string>
-    <string name="stereo_mode_tiled">3D(z) Tiled (720p в 1080p)</string>
-    <string name="output_mode_anaglyph">Анаглиф (Очки)</string>
-    <string name="output_mode_left">Только левый</string>
-    <string name="output_mode_right">Только правый</string>
-    <string name="output_mode_vr">Cardboard VR</string>
-    <string name="glasses_rc">Red - Cyan</string>
-    <string name="glasses_yb">Yellow - Blue</string>
-    <string name="glasses_gm">Green - Magenta</string>
-    <string name="glasses_rb">Red - Blue</string>
+    <!-- Старые подписи режимов воспроизведения (совместимость) -->
 
     <!-- Заголовки настроек OSD -->
-    <string name="setting_video_type">Тип видео</string>
-    <string name="setting_output_format">Режим просмотра</string>
-    <string name="setting_glasses_type">Тип очков</string>
-    <string name="setting_filter">Алгоритм</string>
-    <string name="setting_swap_eyes">Поменять глаза</string>
-    <string name="setting_depth">Параллакс</string>
-    <string name="setting_screen_separation">Разделение (IPD)</string>
-    <string name="setting_vr_distortion">Искажение (K1)</string>
-    <string name="setting_vr_zoom">Масштаб VR</string>
     <string name="setting_audio_track">Аудиодорожка</string>
     <string name="setting_subtitles">Субтитры</string>
-    <string name="setting_hue_l">Оттенок (Левый)</string>
-    <string name="setting_hue_r">Оттенок (Правый)</string>
-    <string name="setting_leak_l">Утечка (Левый)</string>
-    <string name="setting_leak_r">Утечка (Правый)</string>
-    <string name="setting_space">Пространство</string>
 
     <!-- Значения настроек OSD -->
-    <string name="val_custom">Пользов.</string>
-    <string name="val_swap_rl">П - Л</string>
-    <string name="val_swap_lr">Л - П</string>
 
     <!-- Управление воспроизведением -->
     <string name="playback_speed">Скорость</string>
@@ -78,7 +48,7 @@
     <string name="menu_audio_title">Аудиодорожка (%d)</string>
     <string name="menu_subtitle_title">Субтитры (%d)</string>
     <string name="menu_quick_settings_title">Панель настройки</string>
-    <string name="menu_quick_settings_desc">3D, параллакс, очки…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">Глобальные настройки</string>
     <string name="menu_global_settings_desc">Декодер, язык, интерфейс…</string>
     <string name="playlist">Плейлист</string>
@@ -152,11 +122,9 @@
     <string name="pref_language_track_device">Настройки устроства</string>
     <string name="pref_sub_lang_default">Язык субтитров по умолчанию</string>
     <string name="pref_sub_lang_default_desc">Предпочитаемые субтитры (если есть)</string>
-    <string name="pref_calibration_3d">Калибровка 3D</string>
-    <string name="pref_cardboard_vr">Настройка Cardboard VR</string>
-    <string name="pref_cardboard_vr_desc">Мастер настройки линз, масштаба и IPD</string>
-    <string name="pref_anaglyph">Настройка Анаглифа</string>
-    <string name="pref_anaglyph_desc">Определение типа очков и цветокоррекция</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
+    <string name="pref_cardboard_vr_desc">General playback and display options</string>
     <string name="pref_sec_app">Приложение</string>
     <string name="pref_language_system">Язык системы</string>
     <string name="pref_up_action">Действие кнопки \'Вверх\'</string>
@@ -238,9 +206,6 @@
     <!-- ==================================================== -->
     <!-- VR Config Activity                                   -->
     <!-- ==================================================== -->
-    <string name="vr_config_title">Настройка VR</string>
-    <string name="vr_config_success">Профиль Cardboard успешно применен!\n\nK1: %1$.3f\nK2: %2$.3f</string>
-    <string name="vr_config_error">Ошибка чтения профиля Cardboard.</string>
     <string name="pref_app_language_desc">Изменить язык приложения. Изменение требует перезапуск приложения.</string>
 
 </resources>

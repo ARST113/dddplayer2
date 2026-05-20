@@ -29,50 +29,20 @@
     <string name="resize_mode_fill">Розтягнути</string>
     <string name="resize_mode_fill_desc">Повний екран (ігнорує пропорції)</string>
 
-    <!-- Режими 3D -->
-    <string name="stereo_mode_mono">Звичайне 2D</string>
-    <string name="stereo_mode_sbs">Горизонтальна стереопара (SBS)</string>
-    <string name="stereo_mode_tb">Вертикальна стереопара (OU)</string>
-    <string name="stereo_mode_interlaced">Черезрядкова стереопара (Interlaced)</string>
-    <string name="stereo_mode_tiled">3D(z) Tiled (720p у 1080p)</string>
-    <string name="output_mode_anaglyph">Анагліф (Окуляри)</string>
-    <string name="output_mode_left">Тільки ліве</string>
-    <string name="output_mode_right">Тільки праве</string>
-    <string name="output_mode_vr">Cardboard VR</string>
-    <string name="glasses_rc">Red - Cyan</string>
-    <string name="glasses_yb">Yellow - Blue</string>
-    <string name="glasses_gm">Green - Magenta</string>
-    <string name="glasses_rb">Red - Blue</string>
+    <!-- Старі підписи режимів відтворення (сумісність) -->
 
     <!-- Заголовки налаштувань OSD -->
-    <string name="setting_video_type">Тип відео</string>
-    <string name="setting_output_format">Режим перегляду</string>
-    <string name="setting_glasses_type">Тип окулярів</string>
-    <string name="setting_filter">Алгоритм</string>
-    <string name="setting_swap_eyes">Поміняти очі</string>
-    <string name="setting_depth">Паралакс</string>
-    <string name="setting_screen_separation">Розділення (IPD)</string>
-    <string name="setting_vr_distortion">Спотворення (K1)</string>
-    <string name="setting_vr_zoom">Масштаб VR</string>
     <string name="setting_audio_track">Аудіодоріжка</string>
     <string name="setting_subtitles">Субтитри</string>
-    <string name="setting_hue_l">Відтінок (Ліве)</string>
-    <string name="setting_hue_r">Відтінок (Праве)</string>
-    <string name="setting_leak_l">Витік (Ліве)</string>
-    <string name="setting_leak_r">Витік (Праве)</string>
-    <string name="setting_space">Простір</string>
 
     <!-- Значення налаштувань OSD -->
-    <string name="val_custom">Користув.</string>
-    <string name="val_swap_rl">П - Л</string>
-    <string name="val_swap_lr">Л - П</string>
 
     <!-- Бічне меню -->
     <string name="menu_main_title">Налаштування</string>
     <string name="menu_audio_title">Аудіодоріжка (%d)</string>
     <string name="menu_subtitle_title">Субтитри (%d)</string>
     <string name="menu_quick_settings_title">Панель налаштувань</string>
-    <string name="menu_quick_settings_desc">3D, паралакс, окуляри…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">Глобальні налаштування</string>
     <string name="menu_global_settings_desc">Декодер, мова, інтерфейс…</string>
     <string name="playlist">Плейлист</string>
@@ -138,9 +108,8 @@
     <string name="pref_language_track_device">Мови пристрою</string>
     <string name="pref_sub_lang_default">Мова субтитрів за замовчуванням</string>
     <string name="pref_sub_lang_default_desc">Бажані субтитри (якщо є)</string>
-    <string name="pref_calibration_3d">Калібрування 3D</string>
-    <string name="pref_cardboard_vr">Налаштування Cardboard VR</string>
-    <string name="pref_anaglyph">Налаштування Анагліфа</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
     <string name="pref_sec_app">Програма</string>
     <string name="pref_language_system">Мова системи</string>
     <string name="pref_up_action">Дія кнопки \'Вгору\'</string>
@@ -209,9 +178,6 @@
     <string name="qr_code">QR-код</string>
 
     <!-- VR Config -->
-    <string name="vr_config_title">Налаштування VR</string>
-    <string name="vr_config_success">Профіль Cardboard успішно застосовано!\n\nK1: %1$.3f\nK2: %2$.3f</string>
-    <string name="vr_config_error">Помилка читання профілю Cardboard.</string>
     <string name="pref_app_language_desc">Змінити мову програми. Зміна вимагає перезапуску програми.</string>
     <string name="develop_tost">Вибачте, ця функція ще в розробці.</string>
 </resources>
