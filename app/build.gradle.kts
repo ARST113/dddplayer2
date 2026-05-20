@@ -122,6 +122,8 @@ dependencies {
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.exoplayer.smoothstreaming)
     implementation(libs.media3.exoplayer.rtsp)
+
+    implementation("org.videolan.android:libvlc-all:3.6.0-eap14")
     // Локальные AAR (Декодеры audio и AV1)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
