@@ -198,7 +198,7 @@ class PlayerInputHandler(
         // Определяем текущую базу для перемотки
         // Если мы уже мотаем (pendingSeekPosition != -1), то мотаем оттуда.
         // Иначе берем текущую позицию плеера как источник истины.
-        val startPos = if (pendingSeekPosition != -1L) pendingSeekPosition else viewModel.player?.currentPosition ?: ui.seekBar.progress.toLong()
+        val startPos = if (pendingSeekPosition != -1L) pendingSeekPosition else viewModel.getCurrentPositionMs().takeIf { it > 0 } ?: ui.seekBar.progress.toLong()
 
         val target = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT)
             (startPos - step).coerceAtLeast(0)
@@ -209,7 +209,7 @@ class PlayerInputHandler(
         pendingSeekPosition = target
 
         // Считаем общую дельту от реальной позиции плеера (для оверлея)
-        val realPos = viewModel.player?.currentPosition ?: 0L
+        val realPos = viewModel.getCurrentPositionMs()
         pendingSeekDelta = target - realPos
 
         val speed = viewModel.playbackSpeed.value?.value ?: 1.0f
