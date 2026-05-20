@@ -208,4 +208,19 @@
     <!-- ==================================================== -->
     <string name="pref_app_language_desc">Изменить язык приложения. Изменение требует перезапуск приложения.</string>
 
+
+    <string name="pref_playback_engine">Движок воспроизведения</string>
+    <string name="pref_playback_engine_auto">Авто</string>
+    <string name="pref_playback_engine_media3">Media3</string>
+    <string name="pref_playback_engine_vlc_fallback">VLC fallback</string>
+    <string name="pref_playback_engine_vlc_only">Только VLC</string>
+    <string name="pref_fallback_decoder_error">Fallback при ошибке видеодекодера</string>
+    <string name="pref_vlc_hardware_accel">Аппаратное ускорение VLC</string>
+    <string name="pref_vlc_hw_auto">Авто</string>
+    <string name="pref_vlc_hw_disabled">Выкл.</string>
+    <string name="pref_vlc_hw_decoding">Декодирование</string>
+    <string name="pref_vlc_hw_full">Полное</string>
+    <string name="pref_vlc_network_cache">Сетевой кэш VLC, мс</string>
+    <string name="pref_vlc_file_cache">Файловый кэш VLC, мс</string>
+
 </resources>
