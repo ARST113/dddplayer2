@@ -7,7 +7,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -40,7 +39,6 @@ import kotlinx.coroutines.launch
 import top.rootu.dddplayer.BuildConfig
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.data.SettingsRepository
-import top.rootu.dddplayer.logic.AnaglyphLogic
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
@@ -48,7 +46,6 @@ import top.rootu.dddplayer.model.ResizeMode
 import top.rootu.dddplayer.model.StereoInputType
 import top.rootu.dddplayer.model.StereoOutputMode
 import top.rootu.dddplayer.renderer.OnSurfaceReadyListener
-import top.rootu.dddplayer.renderer.StereoRenderer
 import top.rootu.dddplayer.ui.adapter.SideMenuAdapter
 import top.rootu.dddplayer.ui.controller.PlayerInputHandler
 import top.rootu.dddplayer.ui.controller.PlayerTimerController
@@ -73,7 +70,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
     private val settingsViewModel: SettingsViewModel by viewModels()
     private val updateViewModel: UpdateViewModel by viewModels()
 
-    private var stereoRenderer: StereoRenderer? = null
     private var sideMenuDialog: Dialog? = null
     private var sideMenuAdapter: SideMenuAdapter? = null
 
@@ -214,14 +210,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
             true // Поглощаем событие
         }
 
-        // Настройка GL Surface
-        ui.glSurfaceView.setEGLContextClientVersion(2)
-        ui.glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0)
-
-        stereoRenderer = StereoRenderer(ui.glSurfaceView, this)
-        ui.glSurfaceView.setRenderer(stereoRenderer)
-        ui.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-
         return view
     }
 
@@ -246,16 +234,7 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
     }
 
     private fun attachSurfaceToPlayer(player: Player) {
-        // Проверяем текущий режим, чтобы привязать нужную поверхность
-        if (viewModel.inputType.value != StereoInputType.NONE) {
-            // 3D режим -> GL Surface
-            if (glSurface != null) {
-                player.setVideoSurface(glSurface)
-            }
-        } else {
-            // 2D режим -> Standard SurfaceView
-            player.setVideoSurfaceView(ui.standardSurfaceView)
-        }
+        player.setVideoSurfaceView(ui.standardSurfaceView)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -1435,8 +1414,6 @@ class PlayerFragment : Fragment(), OnSurfaceReadyListener {
         doubleTapResetHandler.removeCallbacksAndMessages(null)
 
         // Освобождаем GL ресурсы
-        stereoRenderer?.release()
-        stereoRenderer = null
         glSurface = null
 
         // Восстанавливаем оригинальный режим ТВ при выходе

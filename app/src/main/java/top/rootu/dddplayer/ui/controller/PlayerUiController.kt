@@ -31,7 +31,6 @@ import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.ResizeMode
 import top.rootu.dddplayer.model.StereoInputType
 import top.rootu.dddplayer.model.StereoOutputMode
-import top.rootu.dddplayer.renderer.StereoGLSurfaceView
 import top.rootu.dddplayer.ui.adapter.OptionsAdapter
 import top.rootu.dddplayer.ui.adapter.PlaylistAdapter
 import top.rootu.dddplayer.ui.widget.OutlineTextClock
@@ -46,15 +45,11 @@ class PlayerUiController(private val rootView: View) {
     // Surfaces & Containers
     val aspectRatioFrame: AspectRatioFrameLayout = rootView.findViewById(R.id.aspect_ratio_frame)
     val standardSurfaceView: SurfaceView = rootView.findViewById(R.id.surface_view_standard)
-    val glSurfaceView: StereoGLSurfaceView = rootView.findViewById(R.id.gl_surface_view)
 
     // Views
     val dimOverlay: View = rootView.findViewById(R.id.dim_overlay)
     val touchZoneTop: View = rootView.findViewById(R.id.touch_zone_top)
     val subtitleView: SubtitleView = rootView.findViewById(R.id.subtitle_view)
-    val subtitleSplitContainer: View = rootView.findViewById(R.id.subtitle_split_container)
-    val subtitleViewLeft: SubtitleView = rootView.findViewById(R.id.subtitle_view_left)
-    val subtitleViewRight: SubtitleView = rootView.findViewById(R.id.subtitle_view_right)
     val standaloneClock: OutlineTextClock = rootView.findViewById(R.id.standalone_clock)
 
     // Buffering
@@ -504,13 +499,7 @@ class PlayerUiController(private val rootView: View) {
     }
 
     fun setSurfaceMode(isStereo: Boolean) {
-        if (isStereo) {
-            aspectRatioFrame.visibility = View.GONE
-            glSurfaceView.visibility = View.VISIBLE
-        } else {
-            aspectRatioFrame.visibility = View.VISIBLE
-            glSurfaceView.visibility = View.GONE
-        }
+        aspectRatioFrame.visibility = View.VISIBLE
     }
 
     fun setAspectRatio(ratio: Float) {
@@ -665,34 +654,19 @@ class PlayerUiController(private val rootView: View) {
 
         settingTitle.text = when (type) {
             SettingType.VIDEO_TYPE -> context.getString(R.string.setting_video_type)
-            SettingType.OUTPUT_FORMAT -> context.getString(R.string.setting_output_format)
-            SettingType.GLASSES_TYPE -> context.getString(R.string.setting_glasses_type)
-            SettingType.FILTER_MODE -> context.getString(R.string.setting_filter)
-            SettingType.CUSTOM_HUE_L -> context.getString(R.string.setting_hue_l)
-            SettingType.CUSTOM_HUE_R -> context.getString(R.string.setting_hue_r)
-            SettingType.CUSTOM_LEAK_L -> context.getString(R.string.setting_leak_l)
-            SettingType.CUSTOM_LEAK_R -> context.getString(R.string.setting_leak_r)
-            SettingType.CUSTOM_SPACE -> context.getString(R.string.setting_space)
             SettingType.SWAP_EYES -> context.getString(R.string.setting_swap_eyes)
             SettingType.DEPTH_3D -> context.getString(R.string.setting_depth)
-            SettingType.SCREEN_SEPARATION -> context.getString(R.string.setting_screen_separation)
-            SettingType.VR_DISTORTION -> context.getString(R.string.setting_vr_distortion)
-            SettingType.VR_ZOOM -> context.getString(R.string.setting_vr_zoom)
             SettingType.AUDIO_TRACK -> context.getString(R.string.setting_audio_track)
             SettingType.SUBTITLES -> context.getString(R.string.setting_subtitles)
+            else -> context.getString(R.string.setting_video_type)
         }
     }
 
     fun updateBufferingState(isBuffering: Boolean, mode: StereoOutputMode?, percent: Int) {
         if (isBuffering) {
-            if (mode == StereoOutputMode.CARDBOARD_VR && glSurfaceView.isVisible) {
-                bufferingContainer.isVisible = false
-                bufferingSplitContainer.isVisible = true
-            } else {
-                bufferingContainer.isVisible = true
-                bufferingSplitContainer.isVisible = false
-                bufferingPercentage.text = rootView.context.getString(R.string.percentage_int_format, percent)
-            }
+            bufferingContainer.isVisible = true
+            bufferingSplitContainer.isVisible = false
+            bufferingPercentage.text = rootView.context.getString(R.string.percentage_int_format, percent)
         } else {
             bufferingContainer.isVisible = false
             bufferingSplitContainer.isVisible = false
@@ -700,26 +674,7 @@ class PlayerUiController(private val rootView: View) {
     }
 
     fun updateStereoLayout(mode: StereoOutputMode?, separation: Float) {
-        if (!glSurfaceView.isVisible) {
-            subtitleView.isVisible = true
-            subtitleSplitContainer.isVisible = false
-            return
-        }
-
-        if (mode == StereoOutputMode.CARDBOARD_VR) {
-            subtitleView.isVisible = false
-            subtitleSplitContainer.isVisible = true
-        } else {
-            subtitleView.isVisible = true
-            subtitleSplitContainer.isVisible = false
-        }
-
-        val screenWidth = rootView.resources.displayMetrics.widthPixels
-        val shiftPx = separation * screenWidth
-        subtitleViewLeft.translationX = -shiftPx
-        subtitleViewRight.translationX = shiftPx
-        loaderLeft.translationX = -shiftPx
-        loaderRight.translationX = shiftPx
+        subtitleView.isVisible = true
     }
 
     fun updateInputModeIcon(type: StereoInputType, swapEyes: Boolean) {
