@@ -229,6 +229,7 @@ class PlayerFragment : Fragment() {
 
     private fun attachSurfaceToPlayer(player: Player) {
         player.setVideoSurfaceView(ui.standardSurfaceView)
+        viewModel.bindSurfaceHolder(ui.standardSurfaceView.holder)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -1279,6 +1280,7 @@ class PlayerFragment : Fragment() {
     override fun onDestroyView() {
         // Сначала отвязываем поверхность от плеера
         viewModel.player?.setVideoSurface(null)
+        viewModel.bindSurfaceHolder(null)
 
         // Останавливаем таймеры
         timerController.cleanup()
