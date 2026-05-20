@@ -29,7 +29,7 @@
     <string name="resize_mode_fill">Розтягнути</string>
     <string name="resize_mode_fill_desc">Повний екран (ігнорує пропорції)</string>
 
-    <!-- Режими 3D -->
+    <!-- Старі підписи режимів відтворення (сумісність) -->
     <string name="stereo_mode_mono">Звичайне 2D</string>
     <string name="stereo_mode_sbs">Горизонтальна стереопара (SBS)</string>
     <string name="stereo_mode_tb">Вертикальна стереопара (OU)</string>
@@ -72,7 +72,7 @@
     <string name="menu_audio_title">Аудіодоріжка (%d)</string>
     <string name="menu_subtitle_title">Субтитри (%d)</string>
     <string name="menu_quick_settings_title">Панель налаштувань</string>
-    <string name="menu_quick_settings_desc">3D, паралакс, окуляри…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">Глобальні налаштування</string>
     <string name="menu_global_settings_desc">Декодер, мова, інтерфейс…</string>
     <string name="playlist">Плейлист</string>
@@ -138,9 +138,9 @@
     <string name="pref_language_track_device">Мови пристрою</string>
     <string name="pref_sub_lang_default">Мова субтитрів за замовчуванням</string>
     <string name="pref_sub_lang_default_desc">Бажані субтитри (якщо є)</string>
-    <string name="pref_calibration_3d">Калібрування 3D</string>
-    <string name="pref_cardboard_vr">Налаштування Cardboard VR</string>
-    <string name="pref_anaglyph">Налаштування Анагліфа</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
+    <string name="pref_anaglyph">Color Settings</string>
     <string name="pref_sec_app">Програма</string>
     <string name="pref_language_system">Мова системи</string>
     <string name="pref_up_action">Дія кнопки \'Вгору\'</string>
@@ -209,7 +209,7 @@
     <string name="qr_code">QR-код</string>
 
     <!-- VR Config -->
-    <string name="vr_config_title">Налаштування VR</string>
+    <string name="vr_config_title">Display Settings</string>
     <string name="vr_config_success">Профіль Cardboard успішно застосовано!\n\nK1: %1$.3f\nK2: %2$.3f</string>
     <string name="vr_config_error">Помилка читання профілю Cardboard.</string>
     <string name="pref_app_language_desc">Змінити мову програми. Зміна вимагає перезапуску програми.</string>
