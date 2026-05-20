@@ -4,7 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
+import android.net.Uri
 import android.util.Log
+import android.view.SurfaceHolder
 import android.view.accessibility.CaptioningManager
 import androidx.core.net.toUri
 import androidx.core.os.LocaleListCompat
@@ -77,6 +79,11 @@ class PlayerManager(
     private var playWhenReady = true
 
     private var currentTrackInfo: Map<Int, UnifiedMetadataReader.TrackInfo> = emptyMap()
+    private var currentPlaylistItems: List<MediaItem> = emptyList()
+    private var boundSurfaceHolder: SurfaceHolder? = null
+    private var activeBackend: PlaybackBackend? = null
+    private var media3Backend: Media3Backend? = null
+    private var vlcBackend: VlcBackend? = null
     var onMetadataAvailable: (() -> Unit)? = null
     var onPlayerCreated: ((ExoPlayer) -> Unit)? = null
     var onVideoFormatChanged: ((Format) -> Unit)? = null
@@ -431,6 +438,9 @@ class PlayerManager(
         })
 
         this.exoPlayer = player
+        media3Backend = Media3Backend(player)
+        activeBackend = media3Backend
+        boundSurfaceHolder?.let { media3Backend?.attachSurfaceHolder(it) }
 
         // 6. Restore State
         if (currentMediaItems.isNotEmpty()) {
@@ -523,6 +533,7 @@ class PlayerManager(
     }
 
     fun loadPlaylist(items: List<MediaItem>, startIndex: Int, startPosMs: Long = 0) {
+        currentPlaylistItems = items
         currentTrackInfo = emptyMap()
         resolvedMediaTypes.clear() // Очищаем кэш типов при новой загрузке
 
@@ -567,6 +578,14 @@ class PlayerManager(
         currentPosition = if (startPosMs <= 0L) C.TIME_UNSET else startPosMs
         playWhenReady = true
 
+        if (settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY) {
+            val selected = items.getOrNull(startIndex) ?: return
+            val backend = vlcBackend ?: VlcBackend(appContext, settingsRepo).also { vlcBackend = it }
+            backend.attachSurfaceHolder(boundSurfaceHolder)
+            backend.prepare(selected.uri, selected.headers, startPosMs)
+            activeBackend = backend
+            return
+        }
         if (exoPlayer == null) {
             initializePlayer()
         } else {
@@ -578,6 +597,7 @@ class PlayerManager(
     }
 
     fun releasePlayer(isFinalRelease: Boolean = false, saveState: Boolean = true) {
+        releaseActiveBackend()
         exoPlayer?.let { player ->
             if (saveState) {
                 currentWindowIndex = player.currentMediaItemIndex
@@ -606,15 +626,70 @@ class PlayerManager(
 
     fun getTrackMetadata(): Map<Int, UnifiedMetadataReader.TrackInfo> = currentTrackInfo
 
-    fun togglePlayPause() {
-        exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
+    fun togglePlayPause() { if (isPlaying()) pause() else play() }
+
+    fun seekForward() { seekTo((getPositionMs() + 15000).coerceAtMost(getDurationMs().takeIf { it > 0 } ?: Long.MAX_VALUE)) }
+
+    fun seekBack() { seekTo((getPositionMs() - 15000).coerceAtLeast(0)) }
+
+    fun bindSurfaceHolder(surfaceHolder: SurfaceHolder?) {
+        boundSurfaceHolder = surfaceHolder
+        vlcBackend?.attachSurfaceHolder(surfaceHolder)
     }
 
-    fun seekForward() {
-        exoPlayer?.let { it.seekTo((it.currentPosition + it.seekForwardIncrement).coerceAtMost(it.duration)) }
+    fun getActiveBackendId(): String = when (activeBackend) {
+        vlcBackend -> "VLC"
+        media3Backend -> "MEDIA3"
+        else -> "NONE"
     }
 
-    fun seekBack() {
-        exoPlayer?.let { it.seekTo((it.currentPosition - it.seekBackIncrement).coerceAtLeast(0)) }
+    fun getPositionMs(): Long = activeBackend?.getPositionMs() ?: (exoPlayer?.currentPosition ?: 0L)
+    fun getDurationMs(): Long = activeBackend?.getDurationMs() ?: (exoPlayer?.duration ?: 0L)
+    fun isPlaying(): Boolean = activeBackend?.isPlaying() ?: (exoPlayer?.isPlaying == true)
+    fun getBufferedPositionMs(): Long = activeBackend?.getBufferedPositionMs() ?: (exoPlayer?.bufferedPosition ?: 0L)
+    fun getBufferedPercentage(): Int = activeBackend?.getBufferedPercentage() ?: (exoPlayer?.bufferedPercentage ?: 0)
+    fun play() = activeBackend?.play()
+    fun pause() = activeBackend?.pause()
+    fun seekTo(positionMs: Long) = activeBackend?.seekTo(positionMs)
+
+    fun releaseActiveBackend() {
+        activeBackend?.stop()
+        activeBackend?.release()
+        if (activeBackend === vlcBackend) vlcBackend = null
+        if (activeBackend === media3Backend) media3Backend = null
+        activeBackend = null
     }
+
+    fun maybeFallbackToVlcOnError(error: Throwable): Boolean {
+        val playbackEngine = settingsRepo.getPlaybackEngine()
+        val engineAllowsFallback = playbackEngine == SettingsRepository.PLAYBACK_ENGINE_AUTO ||
+                playbackEngine == SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK
+        if (!engineAllowsFallback || !settingsRepo.isFallbackOnVideoDecoderErrorEnabled()) return false
+        if (!isVideoDecoderError(error)) return false
+        val player = exoPlayer ?: return false
+        val index = player.currentMediaItemIndex
+        if (index !in currentPlaylistItems.indices) return false
+        val item = currentPlaylistItems[index]
+        val pos = player.currentPosition
+        playerListener?.let { player.removeListener(it) }
+        player.release()
+        exoPlayer = null
+        media3Backend = null
+        val backend = VlcBackend(appContext, settingsRepo)
+        backend.attachSurfaceHolder(boundSurfaceHolder)
+        backend.prepare(item.uri, item.headers, pos)
+        vlcBackend = backend
+        activeBackend = backend
+        return true
+    }
+
+    private fun isVideoDecoderError(error: Throwable): Boolean {
+        val msg = error.stackTraceToString().lowercase()
+        return msg.contains("error_code_decoding_failed") ||
+                msg.contains("mediacodecvideorenderer") ||
+                msg.contains("video/hevc") ||
+                msg.contains("c2.google.hevc.decoder") ||
+                msg.contains("decoder initialization")
+    }
+
 }
