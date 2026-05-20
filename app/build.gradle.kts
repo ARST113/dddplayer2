@@ -31,6 +31,9 @@ val gitVersionName: String by lazy {
     }
 }
 
+val versionNameOverride = providers.gradleProperty("versionNameOverride").orNull
+val versionCodeOverride = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -45,8 +48,8 @@ android {
         applicationId = "top.rootu.dddplayer"
         minSdk = 23
         targetSdk = 34
-        versionCode = gitVersionCode
-        versionName = gitVersionName
+        versionCode = versionCodeOverride ?: gitVersionCode
+        versionName = versionNameOverride ?: gitVersionName
         // Выводим в консоль при сборке
         println("Building Version: $versionName ($versionCode)")
 
@@ -58,6 +61,17 @@ android {
         viewBinding = false
     }
 
+    signingConfigs {
+        create("release") {
+            val keystoreFile = file("$projectDir/dddplayer-release.jks")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -65,6 +79,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

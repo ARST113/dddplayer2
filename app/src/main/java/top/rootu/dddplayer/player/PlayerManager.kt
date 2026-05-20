@@ -45,6 +45,9 @@ import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.logic.AudioMixerLogic
 import top.rootu.dddplayer.logic.UnifiedMetadataReader
 import top.rootu.dddplayer.model.MediaItem
+import top.rootu.dddplayer.player.backend.BufferConfig
+import top.rootu.dddplayer.player.backend.BufferProfile
+import top.rootu.dddplayer.player.backend.BufferProfiles
 import top.rootu.dddplayer.utils.MediaFormatHelper
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -83,6 +86,7 @@ class PlayerManager(
     var onAudioOutputFormatChanged: ((String) -> Unit)? = null
 
     private val resolvedMediaTypes = ConcurrentHashMap<String, String>()
+    private var currentBufferProfile: BufferProfile = if (appContext.packageManager.hasSystemFeature("android.software.leanback")) BufferProfile.ANDROID_TV else BufferProfile.BALANCED
 
     private val trustAllCerts = arrayOf<TrustManager>(@SuppressLint("CustomX509TrustManager")
     object : X509TrustManager {
@@ -229,10 +233,12 @@ class PlayerManager(
             MediaCodecSelector.DEFAULT
         }
 
+        val compatibilityMode = settingsRepo.getMedia3CompatibilityMode()
+        val tunnelingEnabled = settingsRepo.isTunnelingEnabled() && compatibilityMode != "FORCE"
         val trackSelector = DefaultTrackSelector(appContext)
         val parametersBuilder = trackSelector.buildUponParameters()
             .setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true)
-            .setTunnelingEnabled(settingsRepo.isTunnelingEnabled())
+            .setTunnelingEnabled(tunnelingEnabled)
             // Разрешаем плееру игнорировать битые дорожки
             .setExceedRendererCapabilitiesIfNecessary(true)
             .setAllowMultipleAdaptiveSelections(true)
@@ -344,12 +350,13 @@ class PlayerManager(
             setEnableDecoderFallback(true) // Разрешаем софтовый декодер
         }
 
+        val bufferConfig = resolveBufferConfig()
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15000, // minBufferMs
-                50000, // maxBufferMs
-                500,   // bufferForPlaybackMs
-                5000   // bufferForPlaybackAfterRebufferMs
+                bufferConfig.minBufferMs,
+                bufferConfig.maxBufferMs,
+                bufferConfig.bufferForPlaybackMs,
+                bufferConfig.bufferForPlaybackAfterRebufferMs
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -441,6 +448,21 @@ class PlayerManager(
         }
 
         onPlayerCreated?.invoke(player)
+    }
+
+    private fun resolveBufferConfig(): BufferConfig {
+        val selected = settingsRepo.getBufferProfile()
+        currentBufferProfile = if (selected == BufferProfile.BALANCED && appContext.packageManager.hasSystemFeature("android.software.leanback")) BufferProfile.ANDROID_TV else selected
+        return if (currentBufferProfile == BufferProfile.CUSTOM) {
+            BufferConfig(
+                settingsRepo.getCustomMinBufferMs(),
+                settingsRepo.getCustomMaxBufferMs(),
+                settingsRepo.getCustomBufferForPlaybackMs(),
+                settingsRepo.getCustomBufferAfterRebufferMs()
+            )
+        } else {
+            BufferProfiles.defaults(currentBufferProfile)
+        }
     }
 
     private fun buildMediaSources(exoItems: List<Media3MediaItem>): List<MediaSource> {
