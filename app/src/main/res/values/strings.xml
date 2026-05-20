@@ -35,46 +35,13 @@
     <string name="resize_mode_fill">Stretch</string>
     <string name="resize_mode_fill_desc">Full screen (ignores aspect ratio)</string>
 
-    <!-- 3D Modes -->
-    <string name="stereo_mode_mono">Normal 2D</string>
-    <string name="stereo_mode_sbs">Side-by-Side (SBS)</string>
-    <string name="stereo_mode_tb">Over-Under (OU)</string>
-    <string name="stereo_mode_interlaced">Interlaced</string>
-    <string name="stereo_mode_tiled">3D(z) Tiled (720p in 1080p)</string>
-    <string name="output_mode_anaglyph">Anaglyph (Glasses)</string>
-    <string name="output_mode_left">Left Only</string>
-    <string name="output_mode_right">Right Only</string>
-    <string name="output_mode_vr">Cardboard VR</string>
-    <string name="glasses_rc">Red - Cyan</string>
-    <string name="glasses_yb">Yellow - Blue</string>
-    <string name="glasses_gm">Green - Magenta</string>
-    <string name="glasses_rb">Red - Blue</string>
+    <!-- Legacy playback mode labels (kept for compatibility) -->
 
     <!-- OSD Settings Titles -->
-    <string name="setting_video_type">Video Type</string>
-    <string name="setting_output_format">View Mode</string>
-    <string name="setting_glasses_type">Glasses Type</string>
-    <string name="setting_filter">Algorithm</string>
-    <string name="setting_swap_eyes">Swap Eyes</string>
-    <string name="setting_depth">Parallax</string>
-    <string name="setting_screen_separation">Separation (IPD)</string>
-    <string name="setting_vr_distortion">Distortion (K1)</string>
-    <string name="setting_vr_zoom">VR Zoom</string>
     <string name="setting_audio_track">Audio Track</string>
     <string name="setting_subtitles">Subtitles</string>
-    <string name="setting_hue_l">Hue (Left)</string>
-    <string name="setting_hue_r">Hue (Right)</string>
-    <string name="setting_leak_l">Leak (Left)</string>
-    <string name="setting_leak_r">Leak (Right)</string>
-    <string name="setting_space">Space</string>
 
     <!-- OSD Settings Values -->
-    <string name="val_custom">Custom</string>
-    <string name="val_swap_rl">R - L</string>
-    <string name="val_swap_lr">L - R</string>
-    <string name="custom_hue_format" translatable="false">%1$d (%2$s)</string>
-    <string name="custom_leak_format" translatable="false">%d%%</string>
-    <string name="screen_separation_format" translatable="false">%.1f</string>
     <string name="vr_distortion_format" translatable="false">%.2f</string>
     <string name="vr_zoom_format" translatable="false">%.2f</string>
 
@@ -83,7 +50,7 @@
     <string name="menu_audio_title">Audio Track (%d)</string>
     <string name="menu_subtitle_title">Subtitles (%d)</string>
     <string name="menu_quick_settings_title">Quick Settings Panel</string>
-    <string name="menu_quick_settings_desc">3D, parallax, glasses…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">Global Settings</string>
     <string name="menu_global_settings_desc">Decoder, language, interface…</string>
     <string name="playlist">Playlist</string>
@@ -157,11 +124,9 @@
     <string name="language_code_format" translatable="false">%1$s (%2$s)</string>
     <string name="pref_sub_lang_default">Default Subtitle Language</string>
     <string name="pref_sub_lang_default_desc">Preferred subtitles (if available)</string>
-    <string name="pref_calibration_3d">3D Calibration</string>
-    <string name="pref_cardboard_vr">Cardboard VR Setup</string>
-    <string name="pref_cardboard_vr_desc">Wizard for lens, zoom, and IPD settings</string>
-    <string name="pref_anaglyph">Anaglyph Setup</string>
-    <string name="pref_anaglyph_desc">Glasses type detection and color correction</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
+    <string name="pref_cardboard_vr_desc">General playback and display options</string>
     <string name="pref_sec_app">Application</string>
     <string name="pref_app_language" translatable="false">Application Language</string>
     <string name="pref_app_language_desc">Change app language. Restart required.</string>
@@ -241,7 +206,4 @@
     <string name="qr_code">QR Code</string>
 
     <!-- VR Config -->
-    <string name="vr_config_title">VR Setup</string>
-    <string name="vr_config_success">Cardboard profile applied successfully!\n\nK1: %1$.3f\nK2: %2$.3f</string>
-    <string name="vr_config_error">Error reading Cardboard profile.</string>
 </resources>

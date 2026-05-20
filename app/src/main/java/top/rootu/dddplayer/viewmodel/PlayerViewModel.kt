@@ -31,32 +31,24 @@ import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeEvent
 import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.data.VideoSettings
-import top.rootu.dddplayer.logic.AnaglyphLogic
 import top.rootu.dddplayer.logic.SettingsMutator
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
 import top.rootu.dddplayer.model.ResizeMode
-import top.rootu.dddplayer.model.StereoInputType
-import top.rootu.dddplayer.model.StereoOutputMode
 import top.rootu.dddplayer.player.PlayerManager
-import top.rootu.dddplayer.renderer.StereoRenderer
 import top.rootu.dddplayer.utils.MediaFormatHelper
-import top.rootu.dddplayer.utils.StereoTypeDetector
 import top.rootu.dddplayer.utils.afr.RuntimeFpsDetector
 import top.rootu.dddplayer.utils.getString
 import androidx.media3.common.MediaItem as Media3MediaItem
 import java.util.concurrent.atomic.AtomicBoolean
 
+
 // --- Enums & Data Classes ---
 enum class SettingType {
-    VIDEO_TYPE, OUTPUT_FORMAT, GLASSES_TYPE, FILTER_MODE,
-    CUSTOM_HUE_L, CUSTOM_HUE_R, CUSTOM_LEAK_L, CUSTOM_LEAK_R, CUSTOM_SPACE,
-    SWAP_EYES, DEPTH_3D, SCREEN_SEPARATION, VR_DISTORTION, VR_ZOOM, AUDIO_TRACK, SUBTITLES
+    AUDIO_TRACK, SUBTITLES
 }
-
-enum class GlassesGroup { RED_CYAN, YELLOW_BLUE, GREEN_MAGENTA, RED_BLUE }
 
 data class TrackOption(
     val format: Format?, // null для пункта "Off"
@@ -172,9 +164,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var showAudioRestoreDebugToast = repository.isShowAudioRestoreDebugEnabled()
     private val trackRestoreMode: TrackRestoreMode = TrackRestoreMode.SMART
 
-    // Делегат для 3D/VR настроек
-    val anaglyphDelegate = AnaglyphDelegate(repository)
-
     // --- LiveData ---
     private val _isPlaying = MutableLiveData<Boolean>()
     val isPlaying: LiveData<Boolean> = _isPlaying
@@ -225,24 +214,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val videoQualityOptions: LiveData<List<VideoQualityOption>> = _videoQualityOptions
     private val _currentQualityName = MutableLiveData("Auto")
     val currentQualityName: LiveData<String> = _currentQualityName
-
-    // Renderer Settings
-    private val _inputType = MutableLiveData(StereoInputType.NONE)
-    val inputType: LiveData<StereoInputType> = _inputType
-    private val _outputMode = MutableLiveData(StereoOutputMode.ANAGLYPH)
-    val outputMode: LiveData<StereoOutputMode> = _outputMode
-    private val _anaglyphType = MutableLiveData(StereoRenderer.AnaglyphType.RC_DUBOIS)
-    val anaglyphType: LiveData<StereoRenderer.AnaglyphType> = _anaglyphType
-    private val _swapEyes = MutableLiveData(false)
-    val swapEyes: LiveData<Boolean> = _swapEyes
-
-    // Параллакс (для конкретного видео)
-    private val _depth = MutableLiveData(0)
-    val depth: LiveData<Int> = _depth
-
-    // Разделение экрана (Глобальная настройка IPD)
-    private val _screenSeparation = MutableLiveData(repository.getGlobalFloat("global_screen_separation_pct", 0f))
-    val screenSeparation: LiveData<Float> = _screenSeparation
 
     // UI State
     private val _singleFrameSize = MutableLiveData<Pair<Float, Float>>()
@@ -589,7 +560,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         // Загружаем кастомные настройки через делегат
-        anaglyphDelegate.loadCustomSettings(_anaglyphType.value!!)
 
         playerManager = PlayerManager(application, playerListener)
 
@@ -796,7 +766,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _currentWindowIndex.value = p.currentMediaItemIndex
 
             isSettingsLoadedFromDb = false
-            _inputType.value = StereoInputType.NONE
 
             // Сбрасываем ошибку видео при ЛЮБОМ переходе
             _videoDisabledError.value = null
@@ -998,39 +967,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         if (videoSize.width == 0 || videoSize.height == 0) return
-
-        if (isSettingsLoadedFromDb) {
-            calculateFrameSize(_inputType.value!!, videoSize)
-            return
-        }
-
-        // Логика автоопределения
-        if (_inputType.value == StereoInputType.NONE) {
-            val detectedType = StereoTypeDetector.detect(
-                player?.videoFormat,
-                player?.currentMediaItem?.localConfiguration?.uri
-            )
-            if (detectedType != StereoInputType.NONE) {
-                setInputType(detectedType)
-                showAutoDetectToast(detectedType)
-            } else {
-                // Эвристика по соотношению сторон
-                val ar = videoSize.width.toFloat() / videoSize.height.toFloat()
-                val heuristic = when {
-                    ar > 3.0 -> StereoInputType.SIDE_BY_SIDE
-                    ar > 0.8 && ar < 1.2 && videoSize.height > videoSize.width * 1.1 -> StereoInputType.TOP_BOTTOM
-                    else -> StereoInputType.NONE
-                }
-                if (heuristic != StereoInputType.NONE) {
-                    setInputType(heuristic)
-                    showAutoDetectToast(heuristic)
-                } else {
-                    calculateFrameSize(StereoInputType.NONE, videoSize)
-                }
-            }
-        } else {
-            calculateFrameSize(_inputType.value!!, videoSize)
-        }
     }
 
     private fun updateTracksInfo(tracks: Tracks) {
@@ -1198,20 +1134,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // --- Settings Logic ---
 
     private fun loadGlobalDefaults() {
-        val outModeOrd = repository.getGlobalInt("def_output_mode", StereoOutputMode.ANAGLYPH.ordinal)
-        val outputMode = StereoOutputMode.entries.getOrNull(outModeOrd) ?: StereoOutputMode.ANAGLYPH
-        _outputMode.postValue(outputMode)
-
-        val anaTypeOrd = repository.getGlobalInt("def_anaglyph_type", StereoRenderer.AnaglyphType.RC_DUBOIS.ordinal)
-        val anaglyphType = StereoRenderer.AnaglyphType.entries.getOrNull(anaTypeOrd) ?: StereoRenderer.AnaglyphType.RC_DUBOIS
-        _anaglyphType.postValue(anaglyphType)
-
-        _screenSeparation.postValue(repository.getGlobalFloat("global_screen_separation_pct", 0f))
-        anaglyphDelegate.loadGlobalVrParams()
-
-        if (AnaglyphLogic.isCustomType(anaglyphType)) anaglyphDelegate.loadCustomSettings(anaglyphType)
         updateAvailableSettings()
-        anaglyphDelegate.updateAnaglyphMatrix(anaglyphType)
     }
 
     fun saveCurrentSettings() {
@@ -1230,9 +1153,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         else _currentSubtitleTrack.value?.format?.id
 
         val settings = VideoSettings(
-            uri, System.currentTimeMillis(),
-            _inputType.value!!, _outputMode.value!!, _anaglyphType.value!!,
-            _swapEyes.value!!, _depth.value!!,
+            uri = uri,
+            lastUpdated = System.currentTimeMillis(),
             lastPosition = positionToSave,
             duration = p.duration.coerceAtLeast(0L),
             audioTrackId = audioId,
@@ -1240,40 +1162,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
         viewModelScope.launch { repository.saveVideoSettings(settings) }
 
-        repository.saveGlobalDefaults(settings.outputMode, settings.anaglyphType)
-        repository.putGlobalFloat("global_screen_separation_pct", _screenSeparation.value!!)
-        anaglyphDelegate.saveGlobalVrParams()
-
         isSettingsLoadedFromDb = true
     }
 
     fun prepareSettingsPanel() {
         // Создаем копию текущих настроек для отката
         backupSettings = VideoSettings(
-            "", 0, _inputType.value!!, _outputMode.value!!,
-            _anaglyphType.value!!, _swapEyes.value!!, _depth.value!!
+            uri = "",
+            lastUpdated = 0,
+            lastPosition = 0L,
+            duration = 0L
         )
         updateAvailableSettings()
     }
 
     fun restoreSettings() {
         backupSettings?.let { applySettings(it) }
-        anaglyphDelegate.loadGlobalVrParams()
     }
 
     private fun applySettings(s: VideoSettings) {
-        _inputType.postValue(s.inputType)
-        _outputMode.postValue(s.outputMode)
-        _anaglyphType.postValue(s.anaglyphType)
-        _swapEyes.postValue(s.swapEyes)
-        _depth.postValue(s.depth)
-
-        anaglyphDelegate.loadGlobalVrParams()
-
-        handler.post { lastVideoSize?.let { calculateFrameSize(s.inputType, it) } }
-        if (AnaglyphLogic.isCustomType(s.anaglyphType)) anaglyphDelegate.loadCustomSettings(s.anaglyphType)
         updateAvailableSettings()
-        anaglyphDelegate.updateAnaglyphMatrix(s.anaglyphType)
     }
 
     // --- Menu Generation ---
@@ -1689,55 +1597,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // Логика изменения настроек (вызывается из Fragment по команде SettingsViewModel)
     fun changeSettingValue(settingType: SettingType, direction: Int) {
         when (settingType) {
-            SettingType.VIDEO_TYPE -> setInputType(SettingsMutator.cycleEnum(_inputType.value!!, direction))
-            SettingType.OUTPUT_FORMAT -> {
-                _outputMode.value = SettingsMutator.cycleEnum(_outputMode.value!!, direction)
-                updateAvailableSettings()
-            }
-            SettingType.GLASSES_TYPE -> {
-                val currentGroup = AnaglyphLogic.getGlassesGroup(_anaglyphType.value!!)
-                val nextGroup = SettingsMutator.cycleEnum(currentGroup, direction)
-                val nextFilter = getPreferredFilter(nextGroup)
-                _anaglyphType.value = nextFilter
-                if (AnaglyphLogic.isCustomType(nextFilter)) anaglyphDelegate.loadCustomSettings(nextFilter)
-                updateAvailableSettings()
-                anaglyphDelegate.updateAnaglyphMatrix(nextFilter)
-            }
-            SettingType.FILTER_MODE -> {
-                val currentGroup = AnaglyphLogic.getGlassesGroup(_anaglyphType.value!!)
-                val filters = AnaglyphLogic.getFiltersForGroup(currentGroup)
-                val nextFilter = SettingsMutator.cycleList(_anaglyphType.value!!, filters, direction)
-                _anaglyphType.value = nextFilter
-                savePreferredFilter(nextFilter)
-                if (AnaglyphLogic.isCustomType(nextFilter)) anaglyphDelegate.loadCustomSettings(nextFilter)
-                updateAvailableSettings()
-                anaglyphDelegate.updateAnaglyphMatrix(nextFilter)
-            }
-            SettingType.CUSTOM_HUE_L -> {
-                anaglyphDelegate.setCustomHueL(SettingsMutator.modifyInt(anaglyphDelegate.customHueOffsetL.value!!, direction, 1, -100, 100))
-                anaglyphDelegate.saveCustomSettings(_anaglyphType.value!!)
-            }
-            SettingType.CUSTOM_HUE_R -> {
-                anaglyphDelegate.setCustomHueR(SettingsMutator.modifyInt(anaglyphDelegate.customHueOffsetR.value!!, direction, 1, -100, 100))
-                anaglyphDelegate.saveCustomSettings(_anaglyphType.value!!)
-            }
-            SettingType.CUSTOM_LEAK_L -> {
-                anaglyphDelegate.setCustomLeakL(SettingsMutator.modifyFloat(anaglyphDelegate.customLeakL.value!!, direction, 0.01f, 0f, 0.5f))
-                anaglyphDelegate.saveCustomSettings(_anaglyphType.value!!)
-            }
-            SettingType.CUSTOM_LEAK_R -> {
-                anaglyphDelegate.setCustomLeakR(SettingsMutator.modifyFloat(anaglyphDelegate.customLeakR.value!!, direction, 0.01f, 0f, 0.5f))
-                anaglyphDelegate.saveCustomSettings(_anaglyphType.value!!)
-            }
-            SettingType.CUSTOM_SPACE -> {
-                anaglyphDelegate.setCustomSpaceLms(!anaglyphDelegate.customSpaceLms.value!!)
-                anaglyphDelegate.saveCustomSettings(_anaglyphType.value!!)
-            }
-            SettingType.SWAP_EYES -> _swapEyes.value = !_swapEyes.value!!
-            SettingType.DEPTH_3D -> _depth.value = SettingsMutator.modifyInt(_depth.value!!, direction, 1, -50, 50)
-            SettingType.SCREEN_SEPARATION -> _screenSeparation.value = SettingsMutator.modifyFloat(_screenSeparation.value!!, direction, 0.005f, -0.15f, 0.15f)
-            SettingType.VR_DISTORTION -> anaglyphDelegate.setVrK1(SettingsMutator.modifyFloat(anaglyphDelegate.vrK1.value!!, direction, 0.02f, 0.0f, 2.0f))
-            SettingType.VR_ZOOM -> anaglyphDelegate.setVrScale(SettingsMutator.modifyFloat(anaglyphDelegate.vrScale.value!!, direction, 0.05f, 0.5f, 3.0f))
             SettingType.AUDIO_TRACK -> {
                 val options = audioOptions
                 if (options.isNotEmpty()) {
@@ -1761,81 +1620,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun getOptionsForSetting(type: SettingType, context: Context): Pair<List<String>, Int>? {
         return when (type) {
-            SettingType.VIDEO_TYPE -> {
-                val values = StereoInputType.entries.toTypedArray()
-                val list = values.map {
-                    val resId = when (it) {
-                        StereoInputType.NONE -> R.string.stereo_mode_mono
-                        StereoInputType.SIDE_BY_SIDE -> R.string.stereo_mode_sbs
-                        StereoInputType.TOP_BOTTOM -> R.string.stereo_mode_tb
-                        StereoInputType.INTERLACED -> R.string.stereo_mode_interlaced
-                        StereoInputType.TILED_1080P -> R.string.stereo_mode_tiled
-                    }
-                    context.getString(resId) // Используем контекст, переданный из Fragment
-                }
-                Pair(list, _inputType.value!!.ordinal)
-            }
-            SettingType.OUTPUT_FORMAT -> {
-                val values = StereoOutputMode.entries.toTypedArray()
-                val list = values.map {
-                    val resId = when (it) {
-                        StereoOutputMode.ANAGLYPH -> R.string.output_mode_anaglyph
-                        StereoOutputMode.LEFT_ONLY -> R.string.output_mode_left
-                        StereoOutputMode.RIGHT_ONLY -> R.string.output_mode_right
-                        StereoOutputMode.CARDBOARD_VR -> R.string.output_mode_vr
-                    }
-                    context.getString(resId) // Используем контекст, переданный из Fragment
-                }
-                Pair(list, _outputMode.value!!.ordinal)
-            }
-            SettingType.GLASSES_TYPE -> {
-                val currentGroup = AnaglyphLogic.getGlassesGroup(_anaglyphType.value!!)
-                val groups = GlassesGroup.entries.toTypedArray()
-                val list = groups.map {
-                    val resId = when(it) {
-                        GlassesGroup.RED_CYAN -> R.string.glasses_rc
-                        GlassesGroup.YELLOW_BLUE -> R.string.glasses_yb
-                        GlassesGroup.GREEN_MAGENTA -> R.string.glasses_gm
-                        GlassesGroup.RED_BLUE -> R.string.glasses_rb
-                    }
-                    context.getString(resId) // Используем контекст, переданный из Fragment
-                }
-                Pair(list, currentGroup.ordinal)
-            }
-            SettingType.FILTER_MODE -> {
-                val currentGroup = AnaglyphLogic.getGlassesGroup(_anaglyphType.value!!)
-                val filters = AnaglyphLogic.getFiltersForGroup(currentGroup)
-                val list = filters.map {
-                    if (it.name.endsWith("_CUSTOM"))
-                        context.getString(R.string.val_custom) // Используем контекст, переданный из Fragment
-                    else it.name
-                }
-                val index = filters.indexOf(_anaglyphType.value!!)
-                Pair(list, index)
-            }
             SettingType.AUDIO_TRACK -> {
-                if (audioOptions.isNotEmpty()) {
-                    // Генерируем строки "здесь и сейчас" используя актуальный контекст
-                    val list = audioOptions.map { TrackLogic.buildTrackLabel(it, context) }
-                    Pair(list, currentAudioIndex)
-                } else null
+                val list = audioOptions.map { TrackLogic.buildTrackLabel(it, context) }
+                val idx = currentAudioIndex
+                Pair(list, idx.coerceAtLeast(0))
             }
             SettingType.SUBTITLES -> {
-                if (subtitleOptions.isNotEmpty()) {
-                    // Генерируем строки "здесь и сейчас"
-                    val list = subtitleOptions.map { TrackLogic.buildTrackLabel(it, context) }
-                    Pair(list, currentSubtitleIndex)
-                } else null
+                val list = subtitleOptions.map { TrackLogic.buildTrackLabel(it, context) }
+                val idx = currentSubtitleIndex
+                Pair(list, idx.coerceAtLeast(0))
             }
-            else -> null
         }
-    }
-
-    fun setInputType(inputType: StereoInputType) {
-        if (_inputType.value == inputType) return
-        _inputType.value = inputType
-        lastVideoSize?.let { calculateFrameSize(inputType, it) }
-        updateAvailableSettings()
     }
 
     fun setVideoQuality(option: VideoQualityOption) {
@@ -1855,94 +1650,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun showAutoDetectToast(type: StereoInputType) {
-        val typeName = type.name.replace("_", " ")
-        // Используем Application Context для тоста, так как он не зависит от локали Activity
-        // и не вызывает проблем с утечками, но здесь мы должны использовать getString из Application
-        // для корректной локализации, если язык был изменен.
-        // В данном случае, мы оставляем Application Context, но для тостов это допустимо.
-        _toastMessage.value = getApplication<Application>().getString(R.string.msg_auto_detect, typeName)
-    }
-
     private fun updateAvailableSettings() {
-        val list = mutableListOf<SettingType>()
-        list.add(SettingType.VIDEO_TYPE)
-        if (_inputType.value != StereoInputType.NONE) {
-            list.add(SettingType.OUTPUT_FORMAT)
-            if (_outputMode.value == StereoOutputMode.ANAGLYPH) {
-                list.add(SettingType.GLASSES_TYPE)
-                list.add(SettingType.FILTER_MODE)
-                if (AnaglyphLogic.isCustomType(_anaglyphType.value!!)) {
-                    list.add(SettingType.CUSTOM_HUE_L); list.add(SettingType.CUSTOM_LEAK_L)
-                    list.add(SettingType.CUSTOM_HUE_R); list.add(SettingType.CUSTOM_LEAK_R)
-                    list.add(SettingType.CUSTOM_SPACE)
-                }
-            }
-            list.add(SettingType.SWAP_EYES)
-            list.add(SettingType.DEPTH_3D)
-            if (_outputMode.value == StereoOutputMode.CARDBOARD_VR) {
-                list.add(SettingType.SCREEN_SEPARATION); list.add(SettingType.VR_DISTORTION); list.add(SettingType.VR_ZOOM)
-            }
-        }
-        if (audioOptions.size > 1) list.add(SettingType.AUDIO_TRACK)
-        if (subtitleOptions.size > 1) list.add(SettingType.SUBTITLES)
-
-        _availableSettings.value = list
-    }
-
-    private fun calculateFrameSize(inputType: StereoInputType, videoSize: VideoSize) {
-        val width = videoSize.width.toFloat()
-        val height = videoSize.height.toFloat()
-        var finalFrameWidth: Float
-        var finalFrameHeight: Float
-
-        when (inputType) {
-            StereoInputType.SIDE_BY_SIDE -> {
-                val halfWidth = width / 2
-                val halfAR = halfWidth / height
-                // Логика определения Full/Half SBS. Если AR половины кадра не широкое (например, 1:1),
-                // то предполагаем Full SBS (кадр 2:1), иначе Half SBS (кадр 1:1).
-                if (halfAR < 1.2f) {
-                    finalFrameWidth = width
-                    finalFrameHeight = height
-                } else {
-                    finalFrameWidth = halfWidth
-                    finalFrameHeight = height
-                }
-            }
-            StereoInputType.TOP_BOTTOM -> {
-                val halfHeight = height / 2
-                val halfAR = width / halfHeight
-                // Логика определения Full/Half OU. Если AR половины кадра очень широкое,
-                // то предполагаем Full OU, иначе Half OU.
-                if (halfAR > 2.5f) {
-                    finalFrameWidth = width
-                    finalFrameHeight = height
-                } else {
-                    finalFrameWidth = width
-                    finalFrameHeight = halfHeight
-                }
-            }
-            else -> { finalFrameWidth = width; finalFrameHeight = height }
-        }
-        _singleFrameSize.value = Pair(finalFrameWidth, finalFrameHeight)
-    }
-
-    private fun savePreferredFilter(type: StereoRenderer.AnaglyphType) {
-        val group = AnaglyphLogic.getGlassesGroup(type)
-        repository.putGlobalInt("pref_filter_${group.name}", type.ordinal)
-    }
-
-    private fun getPreferredFilter(group: GlassesGroup): StereoRenderer.AnaglyphType {
-        val savedOrdinal = repository.getGlobalInt("pref_filter_${group.name}", -1)
-        if (savedOrdinal != -1) {
-            val values = StereoRenderer.AnaglyphType.entries.toTypedArray()
-            if (savedOrdinal in values.indices) {
-                val savedType = values[savedOrdinal]
-                if (AnaglyphLogic.getGlassesGroup(savedType) == group) return savedType
-            }
-        }
-        return AnaglyphLogic.getFiltersForGroup(group).first()
+        _availableSettings.value = listOf(SettingType.AUDIO_TRACK, SettingType.SUBTITLES)
     }
 
     // --- Hot Restart Logic ---

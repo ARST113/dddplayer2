@@ -29,50 +29,20 @@
     <string name="resize_mode_fill">Расцягнуць</string>
     <string name="resize_mode_fill_desc">Поўны экран (ігнаруе прапорцыі)</string>
 
-    <!-- Рэжымы 3D -->
-    <string name="stereo_mode_mono">Звычайнае 2D</string>
-    <string name="stereo_mode_sbs">Гарызантальная стэрэапара (SBS)</string>
-    <string name="stereo_mode_tb">Вертыкальная стэрэапара (OU)</string>
-    <string name="stereo_mode_interlaced">Празрадковай стэрэапара (Interlaced)</string>
-    <string name="stereo_mode_tiled">3D(z) Tiled (720p у 1080p)</string>
-    <string name="output_mode_anaglyph">Анагліф (Акуляры)</string>
-    <string name="output_mode_left">Толькі левае</string>
-    <string name="output_mode_right">Толькі правае</string>
-    <string name="output_mode_vr">Cardboard VR</string>
-    <string name="glasses_rc">Red - Cyan</string>
-    <string name="glasses_yb">Yellow - Blue</string>
-    <string name="glasses_gm">Green - Magenta</string>
-    <string name="glasses_rb">Red - Blue</string>
+    <!-- Састарэлыя подпісы рэжымаў прайгравання (сумяшчальнасць) -->
 
     <!-- Загалоўкі налад OSD -->
-    <string name="setting_video_type">Тып відэа</string>
-    <string name="setting_output_format">Рэжым прагляду</string>
-    <string name="setting_glasses_type">Тып акуляраў</string>
-    <string name="setting_filter">Алгарытм</string>
-    <string name="setting_swap_eyes">Памяняць вочы</string>
-    <string name="setting_depth">Паралакс</string>
-    <string name="setting_screen_separation">Падзел (IPD)</string>
-    <string name="setting_vr_distortion">Скажэнне (K1)</string>
-    <string name="setting_vr_zoom">Маштаб VR</string>
     <string name="setting_audio_track">Аўдыядарожка</string>
     <string name="setting_subtitles">Субцітры</string>
-    <string name="setting_hue_l">Адценне (Левае)</string>
-    <string name="setting_hue_r">Адценне (Правае)</string>
-    <string name="setting_leak_l">Уцечка (Левае)</string>
-    <string name="setting_leak_r">Уцечка (Правае)</string>
-    <string name="setting_space">Прастора</string>
 
     <!-- Значэнні налад OSD -->
-    <string name="val_custom">Карыст.</string>
-    <string name="val_swap_rl">П - Л</string>
-    <string name="val_swap_lr">Л - П</string>
 
     <!-- Бакавое меню -->
     <string name="menu_main_title">Налады</string>
     <string name="menu_audio_title">Аўдыядарожка (%d)</string>
     <string name="menu_subtitle_title">Субцітры (%d)</string>
     <string name="menu_quick_settings_title">Панэль налад</string>
-    <string name="menu_quick_settings_desc">3D, паралакс, акуляры…</string>
+    <string name="menu_quick_settings_desc">Audio track, subtitles…</string>
     <string name="menu_global_settings_title">Глабальныя налады</string>
     <string name="menu_global_settings_desc">Дэкодэр, мова, інтэрфейс…</string>
     <string name="playlist">Плэйліст</string>
@@ -138,9 +108,8 @@
     <string name="pref_language_track_device">Мовы прылады</string>
     <string name="pref_sub_lang_default">Мова субцітраў па змаўчанні</string>
     <string name="pref_sub_lang_default_desc">Пераважныя субцітры (калі ёсць)</string>
-    <string name="pref_calibration_3d">Каліброўка 3D</string>
-    <string name="pref_cardboard_vr">Налада Cardboard VR</string>
-    <string name="pref_anaglyph">Налада Анагліфа</string>
+    <string name="pref_calibration_3d">Playback Settings</string>
+    <string name="pref_cardboard_vr">Display Settings</string>
     <string name="pref_sec_app">Праграма</string>
     <string name="pref_language_system">Мова сістэмы</string>
     <string name="pref_up_action">Дзеянне кнопкі \'Уверх\'</string>
@@ -209,9 +178,6 @@
     <string name="qr_code">QR-код</string>
 
     <!-- VR Config -->
-    <string name="vr_config_title">Налада VR</string>
-    <string name="vr_config_success">Профіль Cardboard паспяхова ўжыты!\n\nK1: %1$.3f\nK2: %2$.3f</string>
-    <string name="vr_config_error">Памылка чытання профілю Cardboard.</string>
     <string name="pref_app_language_desc">Змяніць мову праграмы. Змена патрабуе перазапуску праграмы.</string>
     <string name="develop_tost">Выбачайце, гэтая функцыя яшчэ распрацоўваецца.</string>
 </resources>

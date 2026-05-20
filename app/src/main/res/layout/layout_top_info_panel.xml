@@ -124,33 +124,6 @@
         app:layout_constraintEnd_toStartOf="@+id/time_container"
         android:layout_marginEnd="16dp">
 
-        <ImageView
-            android:id="@+id/icon_input_mode"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_marginEnd="8dp"
-            android:contentDescription="@string/pic"
-            android:src="@drawable/ic_input_mode_mono"
-            app:tint="@color/tv_white" />
-
-        <ImageView
-            android:id="@+id/icon_output_mode"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_marginEnd="8dp"
-            android:contentDescription="@string/pic"
-            android:src="@drawable/ic_output_mode_3d_off"
-            app:tint="@color/tv_white" />
-
-        <ImageView
-            android:id="@+id/icon_swap_eyes"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_marginEnd="16dp"
-            android:contentDescription="@string/pic"
-            android:src="@drawable/ic_swap_horiz"
-            app:tint="@color/tv_white" />
-
         <TextView
             android:id="@+id/badge_resolution"
             android:layout_width="wrap_content"

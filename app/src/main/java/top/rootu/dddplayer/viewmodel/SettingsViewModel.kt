@@ -10,13 +10,13 @@ class SettingsViewModel : ViewModel() {
     private val _isSettingsPanelVisible = MutableLiveData(false)
     val isSettingsPanelVisible: LiveData<Boolean> = _isSettingsPanelVisible
 
-    private val _currentSettingType = MutableLiveData(SettingType.VIDEO_TYPE)
+    private val _currentSettingType = MutableLiveData(SettingType.AUDIO_TRACK)
     val currentSettingType: LiveData<SettingType> = _currentSettingType
 
     fun openPanel(availableSettings: List<SettingType>) {
         // Если текущий пункт недоступен в новом списке, сбрасываем на первый
         if (_currentSettingType.value !in availableSettings) {
-            _currentSettingType.value = availableSettings.firstOrNull() ?: SettingType.VIDEO_TYPE
+            _currentSettingType.value = availableSettings.firstOrNull() ?: SettingType.AUDIO_TRACK
         }
         _isSettingsPanelVisible.value = true
     }
