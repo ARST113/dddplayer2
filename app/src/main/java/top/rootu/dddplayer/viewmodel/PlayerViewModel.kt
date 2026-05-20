@@ -489,6 +489,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (tryRecoverFromError(error)) {
                 return
             }
+            if (playerManager.maybeFallbackToVlcOnError(error)) {
+                return
+            }
             flushProgress(reason = "error", final = true, includeError = error)
             _fatalError.postValue(error)
             _isPlaying.postValue(false)
@@ -1090,6 +1093,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         p.seekTo(pos)
         _currentPosition.value = pos
     }
+    fun bindSurfaceHolder(holder: SurfaceHolder?) = playerManager.bindSurfaceHolder(holder)
+
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun nextTrack() {
         val p = player ?: return
