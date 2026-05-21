@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.SurfaceHolder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -290,25 +291,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val progressUpdater = object : Runnable {
         override fun run() {
-            val p = playerManager.exoPlayer ?: return
-            if (p.isPlaying || p.isLoading) {
+            val p = playerManager.exoPlayer
+            val isActive = playerManager.isPlaying() || playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING
+            android.util.Log.d("DDDPlayer/Backend", "progress source=${playerManager.getActiveBackendId()} pos=${playerManager.getPositionMs()} dur=${playerManager.getDurationMs()}")
+            if (isActive) {
                 if (!isUserInteracting) {
-                    _currentPosition.value = p.currentPosition
+                    _currentPosition.value = playerManager.getPositionMs(); android.util.Log.d("DDDPlayer/Backend", "UI position posted=${_currentPosition.value}")
                 }
-                _bufferedPosition.value = p.bufferedPosition
+                _bufferedPosition.value = playerManager.getBufferedPositionMs()
+                _currentWindowIndex.value = playerManager.getCurrentWindowIndex()
+                _playlistSize.value = playerManager.getPlaylistSize()
+                _hasPrevious.value = playerManager.hasPrevious()
+                _hasNext.value = playerManager.hasNext()
+                val dNow = playerManager.getDurationMs(); if (dNow > 0) { _duration.value = dNow; android.util.Log.d("DDDPlayer/Backend", "duration from backend=$dNow") }
 
-                // Логика расчета процента буферизации вперед
-                // (ExoPlayer.bufferedPercentage не подходит,
-                // т.к. он показывает % буфера на прогрессе, а не заполненность буфера)
-                val bufferedDuration = p.bufferedPosition - p.currentPosition
-                val targetBuffer = if (bufferedDuration > 6_000L) 50_000L else 5_000L
-                val maxPercent = if (targetBuffer == 5_000L) 99 else 100
-                val percent = ((bufferedDuration * 101) / targetBuffer).toInt().coerceIn(0, maxPercent)
-                _bufferedPercentage.value = percent
+                _bufferedPercentage.value = playerManager.getBufferedPercentage().coerceIn(0, 100)
+                _isBuffering.value = playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING || (_bufferedPercentage.value ?: 0) < 100 && !playerManager.isPlaying()
 
                 // Если AFR еще не сработал, проверяем формат
                 if (!afrAppliedForCurrentItem) {
-                    val format = p.videoFormat
+                    val format = p?.videoFormat
                     if (format != null) {
                         updateVideoInfoBadge(format) // Обновляем инфо, а он сам решит, запускать ли детектор
                     }
@@ -321,13 +323,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     BridgeEvent.PositionTick(
                         sessionId = bridgeConfig.sessionId,
                         ts = now,
-                        uri = p.currentMediaItem?.localConfiguration?.uri?.toString(),
-                        position = p.currentPosition,
-                        duration = normalizeDuration(p.duration),
-                        bufferedPosition = p.bufferedPosition,
+                        uri = playerManager.getCurrentUri(),
+                        position = playerManager.getPositionMs(),
+                        duration = normalizeDuration(playerManager.getDurationMs()),
+                        bufferedPosition = playerManager.getBufferedPositionMs(),
                         bufferedPercentage = _bufferedPercentage.value,
-                        windowIndex = p.currentMediaItemIndex,
-                        title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
+                        windowIndex = playerManager.getCurrentWindowIndex(),
+                        title = playerManager.getCurrentTitle(),
                         reason = "tick"
                     )
                 )
@@ -348,22 +350,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun capturePlaybackSnapshot(reason: String): PlaybackSnapshot {
         val p = player
         val fallback = lastKnownSnapshot
-        if (p == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
+        if (p == null && playerManager.getCurrentUri() == null) return fallback?.copy(ts = System.currentTimeMillis(), reason = reason)
             ?: PlaybackSnapshot(bridgeConfig.sessionId, System.currentTimeMillis(), null, null, null, null, null, null, null, null, null, null, reason)
-        val normalizedDuration = normalizeDuration(p.duration)
+        val normalizedDuration = normalizeDuration(playerManager.getDurationMs())
         return PlaybackSnapshot(
             sessionId = bridgeConfig.sessionId,
             ts = System.currentTimeMillis(),
-            uri = p.currentMediaItem?.localConfiguration?.uri?.toString() ?: fallback?.uri,
-            position = normalizePosition(p.currentPosition, normalizedDuration, p.playbackState),
+            uri = playerManager.getCurrentUri() ?: fallback?.uri,
+            position = normalizePosition(playerManager.getPositionMs(), normalizedDuration, p?.playbackState),
             duration = normalizedDuration,
-            bufferedPosition = p.bufferedPosition,
+            bufferedPosition = playerManager.getBufferedPositionMs(),
             bufferedPercentage = _bufferedPercentage.value,
-            windowIndex = p.currentMediaItemIndex,
-            playlistSize = p.mediaItemCount,
-            title = p.currentMediaItem?.mediaMetadata?.title?.toString(),
-            isPlaying = p.isPlaying,
-            playbackState = p.playbackState,
+            windowIndex = playerManager.getCurrentWindowIndex(),
+            playlistSize = playerManager.getPlaylistSize(),
+            title = playerManager.getCurrentTitle(),
+            isPlaying = playerManager.isPlaying(),
+            playbackState = playerManager.getPlaybackStateCompat(),
             reason = reason
         )
     }
@@ -453,7 +455,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     BridgeEvent.PlaybackEnded(
                         sessionId = bridgeConfig.sessionId,
                         ts = System.currentTimeMillis(),
-                        uri = p?.currentMediaItem?.localConfiguration?.uri?.toString(),
+                        uri = playerManager.getCurrentUri(),
                         windowIndex = p?.currentMediaItemIndex ?: 0,
                         playlistSize = p?.mediaItemCount ?: 0,
                         title = p?.currentMediaItem?.mediaMetadata?.title?.toString(),
@@ -486,6 +488,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (playerManager.maybeFallbackToVlcOnError(error)) {
+                return
+            }
             if (tryRecoverFromError(error)) {
                 return
             }
@@ -585,6 +590,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         playerManager.onAudioOutputFormatChanged = { info ->
             _audioOutputInfo.postValue(info)
         }
+        playerManager.onBackendPlayingChanged = { playing ->
+            _isPlaying.postValue(playing)
+            if (playing) {
+                isUserInteracting = false
+                _isBuffering.postValue(false)
+                android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
+                val d = playerManager.getDurationMs()
+                if (d > 0) {
+                    _duration.postValue(d)
+                    android.util.Log.i("DDDPlayer/Backend", "duration update from backend=$d")
+                }
+            }
+            updateProgressUpdaterState()
+        }
+        playerManager.onBackendBufferingChanged = { buffering ->
+            _isBuffering.postValue(buffering)
+            updateProgressUpdaterState()
+        }
+        playerManager.onBackendEnded = {
+            saveCurrentSettings()
+            _playbackEnded.postValue(true)
+            flushProgress("ended", force = true)
+        }
+        playerManager.onBackendError = { err ->
+            saveCurrentSettings()
+            flushProgress(reason = "error", final = true)
+            _fatalError.postValue(err as? PlaybackException ?: PlaybackException(err.message ?: "VLC backend error", err, PlaybackException.ERROR_CODE_UNSPECIFIED))
+            _isPlaying.postValue(false)
+        }
 
         // Инициализируем плеер сразу
         playerManager.initializePlayer()
@@ -598,9 +632,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun updateProgressUpdaterState() {
-        val p = playerManager.exoPlayer ?: return
-        val shouldRun = p.isPlaying || p.playbackState == Player.STATE_BUFFERING
+        val p = playerManager.exoPlayer
+        val shouldRun = playerManager.isPlaying() || p?.playbackState == Player.STATE_BUFFERING || (_isBuffering.value == true)
 
+        android.util.Log.d("DDDPlayer/Backend", "progressUpdater shouldRun=$shouldRun backend=${playerManager.getActiveBackendId()} isPlaying=${playerManager.isPlaying()}")
         if (shouldRun) {
             handler.removeCallbacks(progressUpdater)
             handler.post(progressUpdater)
@@ -1083,21 +1118,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun seekForward() = playerManager.seekForward()
     fun seekBack() = playerManager.seekBack()
     fun seekTo(pos: Long) {
-        val p = player ?: return
-        val from = p.currentPosition
+        val from = playerManager.getPositionMs()
         pendingSeekFromPosition = from
         pendingSeekReason = if (pos > from) "seek_forward" else if (pos < from) "seek_backward" else "seek"
-        p.seekTo(pos)
+        playerManager.seekTo(pos)
         _currentPosition.value = pos
     }
+    fun bindSurfaceHolder(holder: SurfaceHolder?) = playerManager.bindSurfaceHolder(holder)
+    fun getCurrentPositionMs(): Long = playerManager.getPositionMs()
+    fun getCurrentIndex(): Int = playerManager.getCurrentWindowIndex()
+    fun getPlaylistCount(): Int = playerManager.getPlaylistSize()
+    fun getCurrentPosterUri(): android.net.Uri? = _currentPlaylist.value?.getOrNull(playerManager.getCurrentWindowIndex())?.posterUri
+    fun getDurationMs(): Long = playerManager.getDurationMs()
+    fun isBackendPlaying(): Boolean = playerManager.isPlaying()
+
     fun togglePlayPause() = playerManager.togglePlayPause()
+    fun setPlaybackActive(active: Boolean) { if (active) playerManager.play() else playerManager.pause() }
     fun nextTrack() {
-        val p = player ?: return
-        if (p.hasNextMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; p.seekToNextMediaItem(); flushProgress("manual_next", force = true, saveSettings = false) }
+        if (playerManager.hasNext()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; playerManager.next(); flushProgress("manual_next", force = true, saveSettings = false) }
     }
     fun prevTrack() {
-        val p = player ?: return
-        if (p.hasPreviousMediaItem()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; p.seekToPreviousMediaItem(); flushProgress("manual_previous", force = true, saveSettings = false) }
+        if (playerManager.hasPrevious()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; playerManager.previous(); flushProgress("manual_previous", force = true, saveSettings = false) }
     }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
@@ -1299,28 +1340,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * Гарантирует сброс ошибок и включение видео.
      */
     fun playPlaylistItem(index: Int) {
-        player?.let { p ->
-            saveCurrentSettings()
-            val isVideoError = _videoDisabledError.value == null
-            // Сбрасываем ошибку в UI немедленно
-            _videoDisabledError.value = null
-
-            // Включаем видео обратно (на случай, если оно было отключено из-за ошибки)
-            val params = p.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
-                .build()
-            p.trackSelectionParameters = params
-
-            if (p.currentMediaItemIndex == index) {
-                // Если мы уже на этом треке и была ошибка перезапускаем его
-                if (isVideoError) p.seekTo(index, C.TIME_UNSET) // C.TIME_UNSET для Live означает "край"
-            } else {
-                // Переключение на другой трек
-                p.seekToDefaultPosition(index)
-            }
-            p.prepare() // На всякий случай
-            p.play()
-        }
+        saveCurrentSettings()
+        _videoDisabledError.value = null
+        playerManager.playIndex(index, 0L)
+        _currentWindowIndex.value = playerManager.getCurrentWindowIndex()
+        _videoTitle.value = playerManager.getCurrentTitle()
+        _currentPosition.value = 0L
+        _hasPrevious.value = playerManager.hasPrevious()
+        _hasNext.value = playerManager.hasNext()
+        flushProgress("media_item_changed", force = true, saveSettings = false)
     }
 
     fun getNextTrackTitle(): String? {
@@ -1344,6 +1372,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getAudioTrackMenuItems(context: Context): List<MenuItem> {
+        if (playerManager.getActiveBackendId() == "VLC") {
+            val selected = playerManager.getVlcSelectedAudioTrack()
+            return playerManager.getVlcAudioTracks().map { (id,name) -> MenuItem(id.toString(), name, isSelected = id == selected) }
+        }
         return audioOptions.mapIndexed { index, option ->
             val name = TrackLogic.buildTrackLabel(option, context)
             MenuItem(index.toString(), name, isSelected = index == currentAudioIndex)
@@ -1369,6 +1401,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectTrackByIndex(trackType: Int, index: Int, persist: Boolean = true, reason: String = "user_selected", matchScore: Int? = null) {
         val options = if (trackType == C.TRACK_TYPE_AUDIO) audioOptions else subtitleOptions
+
+        if (playerManager.getActiveBackendId() == "VLC") {
+            if (trackType == C.TRACK_TYPE_AUDIO) {
+                val list = playerManager.getVlcAudioTracks()
+                android.util.Log.i("DDDPlayer/VLC", "audio tracks=$list selected=${playerManager.getVlcSelectedAudioTrack()}")
+                val pair = list.getOrNull(index) ?: list.firstOrNull { it.first == index } ?: return
+                val ok = playerManager.selectVlcAudioTrack(pair.first)
+                android.util.Log.i("DDDPlayer/VLC", "audio switch requested=${pair.first} ok=$ok")
+                _toastMessage.postValue("VLC audio: ${pair.second}")
+            } else {
+                _toastMessage.postValue("Subtitles are not supported in VLC mode yet")
+            }
+            return
+        }
 
         if (index in options.indices) {
             val option = options[index]
@@ -1598,10 +1644,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun changeSettingValue(settingType: SettingType, direction: Int) {
         when (settingType) {
             SettingType.AUDIO_TRACK -> {
-                val options = audioOptions
-                if (options.isNotEmpty()) {
-                    val nextIndex = (currentAudioIndex + direction + options.size) % options.size
-                    selectTrackByIndex(C.TRACK_TYPE_AUDIO, nextIndex)
+                if (playerManager.getActiveBackendId() == "VLC") {
+                    val options = playerManager.getVlcAudioTracks()
+                    if (options.isNotEmpty()) {
+                        val currentId = playerManager.getVlcSelectedAudioTrack()
+                        val currentIdx = options.indexOfFirst { it.first == currentId }.coerceAtLeast(0)
+                        val nextIndex = (currentIdx + direction + options.size) % options.size
+                        playerManager.selectVlcAudioTrack(options[nextIndex].first)
+                        _toastMessage.postValue("VLC audio: ${options[nextIndex].second}")
+                    }
+                } else {
+                    val options = audioOptions
+                    if (options.isNotEmpty()) {
+                        val nextIndex = (currentAudioIndex + direction + options.size) % options.size
+                        selectTrackByIndex(C.TRACK_TYPE_AUDIO, nextIndex)
+                    }
                 }
             }
             SettingType.SUBTITLES -> {
