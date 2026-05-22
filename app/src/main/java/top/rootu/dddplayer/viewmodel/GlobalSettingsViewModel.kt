@@ -21,6 +21,22 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
     private val _decoderPriority = MutableLiveData(repository.getDecoderPriority())
     val decoderPriority: LiveData<Int> = _decoderPriority
 
+
+    private val _playbackEngine = MutableLiveData(repository.getPlaybackEngine())
+    val playbackEngine: LiveData<String> = _playbackEngine
+
+    private val _isFallbackOnVideoDecoderErrorEnabled = MutableLiveData(repository.isFallbackOnVideoDecoderErrorEnabled())
+    val isFallbackOnVideoDecoderErrorEnabled: LiveData<Boolean> = _isFallbackOnVideoDecoderErrorEnabled
+
+    private val _vlcHardwareAccelerationMode = MutableLiveData(repository.getVlcHardwareAccelerationMode())
+    val vlcHardwareAccelerationMode: LiveData<String> = _vlcHardwareAccelerationMode
+
+    private val _vlcNetworkCachingMs = MutableLiveData(repository.getVlcNetworkCachingMs())
+    val vlcNetworkCachingMs: LiveData<Int> = _vlcNetworkCachingMs
+
+    private val _vlcFileCachingMs = MutableLiveData(repository.getVlcFileCachingMs())
+    val vlcFileCachingMs: LiveData<Int> = _vlcFileCachingMs
+
     private val _isTunnelingEnabled = MutableLiveData(repository.isTunnelingEnabled())
     val isTunnelingEnabled: LiveData<Boolean> = _isTunnelingEnabled
 
@@ -121,6 +137,50 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
         }
         repository.setDecoderPriority(next)
         _decoderPriority.value = next
+    }
+
+
+    fun cyclePlaybackEngine() {
+        val current = _playbackEngine.value ?: SettingsRepository.PLAYBACK_ENGINE_AUTO
+        val next = when (current) {
+            SettingsRepository.PLAYBACK_ENGINE_AUTO -> SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY
+            SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK
+            SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY
+            else -> SettingsRepository.PLAYBACK_ENGINE_AUTO
+        }
+        repository.setPlaybackEngine(next)
+        _playbackEngine.value = next
+    }
+
+    fun toggleFallbackOnDecoderError(enabled: Boolean) {
+        repository.setFallbackOnVideoDecoderErrorEnabled(enabled)
+        _isFallbackOnVideoDecoderErrorEnabled.value = enabled
+    }
+
+    fun cycleVlcHardwareAccelerationMode() {
+        val current = _vlcHardwareAccelerationMode.value ?: SettingsRepository.VLC_HW_AUTO
+        val next = when (current) {
+            SettingsRepository.VLC_HW_AUTO -> SettingsRepository.VLC_HW_DISABLED
+            SettingsRepository.VLC_HW_DISABLED -> SettingsRepository.VLC_HW_DECODING
+            SettingsRepository.VLC_HW_DECODING -> SettingsRepository.VLC_HW_FULL
+            else -> SettingsRepository.VLC_HW_AUTO
+        }
+        repository.setVlcHardwareAccelerationMode(next)
+        _vlcHardwareAccelerationMode.value = next
+    }
+
+    fun cycleVlcNetworkCachingMs() {
+        val current = _vlcNetworkCachingMs.value ?: 1500
+        val next = when (current) {500 -> 1000; 1000 -> 1500; 1500 -> 2000; 2000 -> 3000; else -> 500}
+        repository.setVlcNetworkCachingMs(next)
+        _vlcNetworkCachingMs.value = next
+    }
+
+    fun cycleVlcFileCachingMs() {
+        val current = _vlcFileCachingMs.value ?: 1500
+        val next = when (current) {500 -> 1000; 1000 -> 1500; 1500 -> 2000; 2000 -> 3000; else -> 500}
+        repository.setVlcFileCachingMs(next)
+        _vlcFileCachingMs.value = next
     }
 
     fun toggleTunneling(enabled: Boolean) {
@@ -294,6 +354,21 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
             DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER -> R.string.pref_decoder_priority_prefer_app
             else -> R.string.pref_decoder_priority_prefer_device
         }
+    }
+
+
+    fun getPlaybackEngineLabel(value: String): Int = when (value) {
+        SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> R.string.pref_playback_engine_media3
+        SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> R.string.pref_playback_engine_vlc_fallback
+        SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY -> R.string.pref_playback_engine_vlc_only
+        else -> R.string.pref_playback_engine_auto
+    }
+
+    fun getVlcHardwareAccelerationLabel(value: String): Int = when (value) {
+        SettingsRepository.VLC_HW_DISABLED -> R.string.pref_vlc_hw_disabled
+        SettingsRepository.VLC_HW_DECODING -> R.string.pref_vlc_hw_decoding
+        SettingsRepository.VLC_HW_FULL -> R.string.pref_vlc_hw_full
+        else -> R.string.pref_vlc_hw_auto
     }
 
     @StringRes
