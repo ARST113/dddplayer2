@@ -181,9 +181,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         bridgeConfig = config
     }
 
-    private val _currentPosition = MutableLiveData<Long>()
+    private val _currentPosition = MutableLiveData(0L)
     val currentPosition: LiveData<Long> = _currentPosition
-    private val _duration = MutableLiveData<Long>()
+    private val _duration = MutableLiveData(0L)
     val duration: LiveData<Long> = _duration
     private val _videoTitle = MutableLiveData<String?>()
     val videoTitle: LiveData<String?> = _videoTitle
@@ -296,14 +296,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             android.util.Log.d("DDDPlayer/Backend", "progress source=${playerManager.getActiveBackendId()} pos=${playerManager.getPositionMs()} dur=${playerManager.getDurationMs()}")
             if (isActive) {
                 if (!isUserInteracting) {
-                    _currentPosition.value = playerManager.getPositionMs(); android.util.Log.d("DDDPlayer/Backend", "UI position posted=${_currentPosition.value}")
+                    _currentPosition.value = playerManager.getPositionMs().coerceAtLeast(0L); android.util.Log.d("DDDPlayer/Backend", "UI position posted=${_currentPosition.value}")
                 }
-                _bufferedPosition.value = playerManager.getBufferedPositionMs()
+                _bufferedPosition.value = playerManager.getBufferedPositionMs().coerceAtLeast(0L)
                 _currentWindowIndex.value = playerManager.getCurrentWindowIndex()
                 _playlistSize.value = playerManager.getPlaylistSize()
                 _hasPrevious.value = playerManager.hasPrevious()
                 _hasNext.value = playerManager.hasNext()
-                val dNow = playerManager.getDurationMs(); if (dNow > 0) { _duration.value = dNow; android.util.Log.d("DDDPlayer/Backend", "duration from backend=$dNow") }
+                val dNow = playerManager.getDurationMs().takeIf { it > 0 } ?: 0L; _duration.value = dNow; android.util.Log.d("DDDPlayer/Backend", "duration from backend=$dNow")
 
                 _bufferedPercentage.value = playerManager.getBufferedPercentage().coerceIn(0, 100)
                 _isBuffering.value = playerManager.getPlaybackStateCompat() == Player.STATE_BUFFERING || (_bufferedPercentage.value ?: 0) < 100 && !playerManager.isPlaying()
@@ -441,7 +441,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _isBuffering.value = (playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY) {
                 ioRetryCount = 0 // Сброс счетчика, если видео успешно заиграло
-                _duration.value = player?.duration
+                _duration.value = playerManager.getDurationMs().takeIf { it > 0 } ?: 0L
                 // После буферизации или старта обновляем инфо
                 player?.videoFormat?.let { updateVideoInfoBadge(it) }
             }
@@ -574,7 +574,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _playerRecreatedEvent.postValue(newPlayer)
             // Принудительно обновляем UI состояние
             _isPlaying.postValue(newPlayer.isPlaying)
-            _duration.postValue(newPlayer.duration)
+            _duration.postValue(newPlayer.duration.takeIf { it > 0 } ?: 0L)
         }
 
         playerManager.onVideoFormatChanged = { format ->
@@ -597,11 +597,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 isUserInteracting = false
                 _isBuffering.postValue(false)
                 android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
-                val d = playerManager.getDurationMs()
-                if (d > 0) {
-                    _duration.postValue(d)
-                    android.util.Log.i("DDDPlayer/Backend", "duration update from backend=$d")
-                }
+                val d = playerManager.getDurationMs().takeIf { it > 0 } ?: 0L
+                _duration.postValue(d)
+                android.util.Log.i("DDDPlayer/Backend", "duration update from backend=$d")
             }
             updateProgressUpdaterState()
         }

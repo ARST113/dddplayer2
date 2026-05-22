@@ -956,14 +956,16 @@ class PlayerFragment : Fragment() {
         }
 
         viewModel.duration.observe(viewLifecycleOwner) { duration ->
-            ui.seekBar.max = duration.toInt()
+            val safeDuration = duration.coerceIn(0L, Int.MAX_VALUE.toLong())
+            ui.seekBar.max = safeDuration.toInt()
             // Обновляем метки при изменении длительности
-            val current = viewModel.currentPosition.value ?: 0L
+            val current = (viewModel.currentPosition.value ?: 0L).coerceAtLeast(0L)
             updateTimeLabelsUI(current)
         }
         viewModel.currentPosition.observe(viewLifecycleOwner) { position ->
             if (!viewModel.isUserInteracting) {
-                ui.seekBar.progress = position.toInt()
+                val safePosition = position.coerceIn(0L, Int.MAX_VALUE.toLong())
+                ui.seekBar.progress = safePosition.toInt()
                 updateTimeLabelsUI(position)
             }
         }
@@ -1044,7 +1046,8 @@ class PlayerFragment : Fragment() {
         }
 
         viewModel.bufferedPosition.observe(viewLifecycleOwner) { bufferedPos ->
-            ui.seekBar.secondaryProgress = bufferedPos.toInt()
+            val safeBuffered = bufferedPos.coerceIn(0L, Int.MAX_VALUE.toLong())
+            ui.seekBar.secondaryProgress = safeBuffered.toInt()
         }
 
         // Панель настроек (SettingsViewModel)
