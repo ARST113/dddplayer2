@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -59,6 +60,8 @@ import top.rootu.dddplayer.viewmodel.UpdateViewModel
 import kotlin.math.abs
 
 class PlayerFragment : Fragment() {
+
+    private fun Long?.orEmptyTime(): Long = this ?: 0L
 
     private var dimJob: Job? = null
     private var zoomDialog: Dialog? = null
@@ -112,6 +115,13 @@ class PlayerFragment : Fragment() {
     private var currentSwipeTargetIsNext: Boolean? = null
     private var currentSwipeIsExit: Boolean = false
 
+
+
+    private val surfaceHolderCallback = object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) { viewModel.bindSurfaceHolder(holder) }
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { viewModel.bindSurfaceHolder(holder) }
+        override fun surfaceDestroyed(holder: SurfaceHolder) { viewModel.bindSurfaceHolder(null) }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -215,6 +225,8 @@ class PlayerFragment : Fragment() {
         afrHelper.saveOriginalState(requireActivity())
 
         view.requestFocus()
+        ui.standardSurfaceView.holder.addCallback(surfaceHolderCallback)
+        viewModel.bindSurfaceHolder(ui.standardSurfaceView.holder)
         setupControls()
         observeViewModel()
         setupBackPressedHandler()
@@ -229,6 +241,7 @@ class PlayerFragment : Fragment() {
 
     private fun attachSurfaceToPlayer(player: Player) {
         player.setVideoSurfaceView(ui.standardSurfaceView)
+        viewModel.bindSurfaceHolder(ui.standardSurfaceView.holder)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -328,7 +341,7 @@ class PlayerFragment : Fragment() {
             swipeSeekCurrentPosition = (swipeSeekCurrentPosition + timeDelta).coerceIn(0, duration)
 
             // Используем центральный оверлей (тот же, что и для кнопок)
-            val totalDelta = swipeSeekCurrentPosition - (viewModel.player?.currentPosition ?: 0L)
+            val totalDelta = swipeSeekCurrentPosition - viewModel.getCurrentPositionMs()
             val isLive = viewModel.isLive.value ?: false
             val liveOffset = if (isLive) ((viewModel.duration.value ?: 0L) - swipeSeekCurrentPosition).coerceAtLeast(0) else 0L
             ui.showSeekOverlay(totalDelta, swipeSeekCurrentPosition, isLive, liveOffset)
@@ -945,17 +958,34 @@ class PlayerFragment : Fragment() {
         }
 
         viewModel.duration.observe(viewLifecycleOwner) { duration ->
-            ui.seekBar.max = duration.toInt()
+            val safeDuration = (duration as Long?).orEmptyTime().coerceIn(0L, Int.MAX_VALUE.toLong())
+            ui.seekBar.max = safeDuration.toInt()
+            android.util.Log.i("DDDPlayer/UI", "seekbar.setMax(${safeDuration.toInt()})")
             // Обновляем метки при изменении длительности
-            val current = viewModel.currentPosition.value ?: 0L
+            val current = (viewModel.currentPosition.value ?: 0L).coerceAtLeast(0L)
             updateTimeLabelsUI(current)
         }
         viewModel.currentPosition.observe(viewLifecycleOwner) { position ->
             if (!viewModel.isUserInteracting) {
-                ui.seekBar.progress = position.toInt()
-                updateTimeLabelsUI(position)
+                val safePosition = (position as Long?).orEmptyTime().coerceIn(0L, Int.MAX_VALUE.toLong())
+                ui.seekBar.progress = safePosition.toInt()
+                android.util.Log.i("DDDPlayer/UI", "seekbar.setProgress(${safePosition.toInt()})")
+                updateTimeLabelsUI((position as Long?).orEmptyTime())
+                android.util.Log.i("DDDPlayer/UI", "currentTimeText.setText(${ui.timeCurrentTextView.text})")
+                android.util.Log.i("DDDPlayer/UI", "durationText.setText(${ui.timeDurationTextView.text})")
             }
         }
+
+        viewModel.currentWindowIndex.observe(viewLifecycleOwner) {
+            val posterUri = viewModel.getCurrentPosterUri()
+            val index = viewModel.getCurrentIndex()
+            val size = viewModel.getPlaylistCount()
+            val settingsRepo = SettingsRepository.getInstance(requireContext().applicationContext)
+            ui.loadPoster(posterUri, index, size, settingsRepo.isShowPlaylistIndexEnabled())
+            android.util.Log.i("DDDPlayer/UI", "currentWindowIndex source=viewModel value=$index")
+            ui.updatePlaylistSelectedIndex(index)
+        }
+
         viewModel.videoTitle.observe(viewLifecycleOwner) { title ->
             ui.videoTitleTextView.text = title
             viewModel.player?.let { p ->
@@ -1023,7 +1053,8 @@ class PlayerFragment : Fragment() {
         }
 
         viewModel.bufferedPosition.observe(viewLifecycleOwner) { bufferedPos ->
-            ui.seekBar.secondaryProgress = bufferedPos.toInt()
+            val safeBuffered = (bufferedPos as Long?).orEmptyTime().coerceIn(0L, Int.MAX_VALUE.toLong())
+            ui.seekBar.secondaryProgress = safeBuffered.toInt()
         }
 
         // Панель настроек (SettingsViewModel)
@@ -1065,7 +1096,7 @@ class PlayerFragment : Fragment() {
             if (settingsRepo.isFrameRateMatchingEnabled()) {
 
                 // 1. Проверка на короткие видео (Skip Shorts)
-                val durationMs = viewModel.player?.duration ?: C.TIME_UNSET
+                val durationMs = viewModel.getDurationMs().takeIf { it > 0 } ?: C.TIME_UNSET
                 if (settingsRepo.isAfrSkipShortsEnabled() && durationMs in 1..60000) {
                     return@observe
                 }
@@ -1191,12 +1222,18 @@ class PlayerFragment : Fragment() {
     }
 
     private fun updateAudioBadge() {
-        val track = viewModel.currentAudioTrack.value
-        val res = track?.let { TrackLogic.buildTrackLabel(it, requireContext()) } ?: ""
+        val source = viewModel.getActiveBackendId()
+        val res = if (source == "VLC") {
+            viewModel.getCurrentAudioLabelForUi(requireContext())
+        } else {
+            val track = viewModel.currentAudioTrack.value
+            track?.let { TrackLogic.buildTrackLabel(it, requireContext()) } ?: getString(R.string.track_unknown)
+        }
         val audioOut = viewModel.audioOutputInfo.value ?: ""
 
         val text = if (audioOut.isNotEmpty()) getString(R.string.audio_badge_format, res, audioOut) else res
         ui.badgeAudio.text = text
+        android.util.Log.i("DDDPlayer/UI", "topAudioBadge.text=$text source=$source selectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} lastSelectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} tracks=${viewModel.getVlcAudioTracksForUi().map { "${it.id}:${it.label}" }}")
     }
 
     private fun showPlaylist() {
@@ -1212,9 +1249,10 @@ class PlayerFragment : Fragment() {
         val settingsRepo = SettingsRepository.getInstance(requireContext().applicationContext)
         val showIndex = settingsRepo.isShowPlaylistIndexEnabled()
 
+        android.util.Log.i("DDDPlayer/UI", "playlistOverlay.open selectedIndex=${viewModel.getCurrentIndex()}")
         ui.showPlaylistDialog(
             items = playlist,
-            currentIndex = viewModel.player?.currentMediaItemIndex ?: 0,
+            currentIndex = viewModel.getCurrentIndex(),
             showIndexBadge = showIndex,
             onItemSelected = { index ->
                 viewModel.playPlaylistItem(index)
@@ -1267,18 +1305,20 @@ class PlayerFragment : Fragment() {
 
         // Проверяем, нужно ли перезапустить плеер из-за смены настроек
         viewModel.checkSettingsAndRestart()
-        viewModel.player?.playWhenReady = true
+        viewModel.setPlaybackActive(true)
     }
 
     override fun onPause() {
         super.onPause()
         viewModel.saveCurrentSettings()
-        viewModel.player?.playWhenReady = false
+        viewModel.setPlaybackActive(false)
     }
 
     override fun onDestroyView() {
         // Сначала отвязываем поверхность от плеера
         viewModel.player?.setVideoSurface(null)
+        ui.standardSurfaceView.holder.removeCallback(surfaceHolderCallback)
+        viewModel.bindSurfaceHolder(null)
 
         // Останавливаем таймеры
         timerController.cleanup()
