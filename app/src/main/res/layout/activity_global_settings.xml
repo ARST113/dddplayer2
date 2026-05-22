@@ -108,6 +108,44 @@
                     tools:text="HW+SW" />
             </LinearLayout>
 
+
+            <LinearLayout
+                android:id="@+id/item_playback_engine"
+                style="@style/SettingsItemContainer">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+                    <TextView style="@style/SettingsItemTitle" android:text="@string/pref_playback_engine" />
+                </LinearLayout>
+                <TextView android:id="@+id/text_playback_engine_value" style="@style/SettingsItemValue" tools:text="Auto" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/item_fallback_decoder_error" style="@style/SettingsItemContainer">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+                    <TextView style="@style/SettingsItemTitle" android:text="@string/pref_fallback_decoder_error" />
+                </LinearLayout>
+                <androidx.appcompat.widget.SwitchCompat android:id="@+id/switch_fallback_decoder_error" android:layout_width="wrap_content" android:layout_height="wrap_content" android:clickable="false" android:focusable="false"/>
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/item_vlc_hw_accel" style="@style/SettingsItemContainer">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+                    <TextView style="@style/SettingsItemTitle" android:text="@string/pref_vlc_hardware_accel" />
+                </LinearLayout>
+                <TextView android:id="@+id/text_vlc_hw_accel_value" style="@style/SettingsItemValue" tools:text="Auto" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/item_vlc_network_cache" style="@style/SettingsItemContainer">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+                    <TextView style="@style/SettingsItemTitle" android:text="@string/pref_vlc_network_cache" />
+                </LinearLayout>
+                <TextView android:id="@+id/text_vlc_network_cache_value" style="@style/SettingsItemValue" tools:text="1500" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/item_vlc_file_cache" style="@style/SettingsItemContainer">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+                    <TextView style="@style/SettingsItemTitle" android:text="@string/pref_vlc_file_cache" />
+                </LinearLayout>
+                <TextView android:id="@+id/text_vlc_file_cache_value" style="@style/SettingsItemValue" tools:text="1500" />
+            </LinearLayout>
+
             <!-- Downmix -->
             <LinearLayout
                 android:id="@+id/item_downmix"
