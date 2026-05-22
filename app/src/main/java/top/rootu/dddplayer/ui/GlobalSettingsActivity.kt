@@ -44,6 +44,17 @@ class GlobalSettingsActivity : AppCompatActivity() {
     private lateinit var itemDecoder: LinearLayout
     private lateinit var textDecoderDesc: TextView
     private lateinit var textDecoderValue: TextView
+
+    private lateinit var itemPlaybackEngine: LinearLayout
+    private lateinit var textPlaybackEngineValue: TextView
+    private lateinit var itemFallbackDecoderError: LinearLayout
+    private lateinit var switchFallbackDecoderError: SwitchCompat
+    private lateinit var itemVlcHwAccel: LinearLayout
+    private lateinit var textVlcHwAccelValue: TextView
+    private lateinit var itemVlcNetworkCache: LinearLayout
+    private lateinit var textVlcNetworkCacheValue: TextView
+    private lateinit var itemVlcFileCache: LinearLayout
+    private lateinit var textVlcFileCacheValue: TextView
     private lateinit var itemTunneling: LinearLayout
     private lateinit var switchTunneling: SwitchCompat
     private lateinit var itemDv: LinearLayout
@@ -143,6 +154,16 @@ class GlobalSettingsActivity : AppCompatActivity() {
         itemDecoder = findViewById(R.id.item_decoder)
         textDecoderDesc = findViewById(R.id.text_decoder_desc)
         textDecoderValue = findViewById(R.id.text_decoder_value)
+        itemPlaybackEngine = findViewById(R.id.item_playback_engine)
+        textPlaybackEngineValue = findViewById(R.id.text_playback_engine_value)
+        itemFallbackDecoderError = findViewById(R.id.item_fallback_decoder_error)
+        switchFallbackDecoderError = findViewById(R.id.switch_fallback_decoder_error)
+        itemVlcHwAccel = findViewById(R.id.item_vlc_hw_accel)
+        textVlcHwAccelValue = findViewById(R.id.text_vlc_hw_accel_value)
+        itemVlcNetworkCache = findViewById(R.id.item_vlc_network_cache)
+        textVlcNetworkCacheValue = findViewById(R.id.text_vlc_network_cache_value)
+        itemVlcFileCache = findViewById(R.id.item_vlc_file_cache)
+        textVlcFileCacheValue = findViewById(R.id.text_vlc_file_cache_value)
         itemTunneling = findViewById(R.id.item_tunneling)
         switchTunneling = findViewById(R.id.switch_tunneling)
         itemDv = findViewById(R.id.item_dv)
@@ -201,6 +222,11 @@ class GlobalSettingsActivity : AppCompatActivity() {
 
         // Decoder
         itemDecoder.setOnClickListener { settingsViewModel.toggleDecoderPriority() }
+        itemPlaybackEngine.setOnClickListener { settingsViewModel.cyclePlaybackEngine() }
+        itemFallbackDecoderError.setOnClickListener { settingsViewModel.toggleFallbackOnDecoderError(!switchFallbackDecoderError.isChecked) }
+        itemVlcHwAccel.setOnClickListener { settingsViewModel.cycleVlcHardwareAccelerationMode() }
+        itemVlcNetworkCache.setOnClickListener { settingsViewModel.cycleVlcNetworkCachingMs() }
+        itemVlcFileCache.setOnClickListener { settingsViewModel.cycleVlcFileCachingMs() }
 
         // Downmix
         itemDownmix.setOnClickListener {
@@ -330,6 +356,11 @@ class GlobalSettingsActivity : AppCompatActivity() {
             textDecoderValue.text = settingsViewModel.getDecoderValueString(mode)
             textDecoderDesc.setText(settingsViewModel.getDecoderDescResId(mode))
         }
+        settingsViewModel.playbackEngine.observe(this) { textPlaybackEngineValue.setText(settingsViewModel.getPlaybackEngineLabel(it)) }
+        settingsViewModel.isFallbackOnVideoDecoderErrorEnabled.observe(this) { switchFallbackDecoderError.isChecked = it }
+        settingsViewModel.vlcHardwareAccelerationMode.observe(this) { textVlcHwAccelValue.setText(settingsViewModel.getVlcHardwareAccelerationLabel(it)) }
+        settingsViewModel.vlcNetworkCachingMs.observe(this) { textVlcNetworkCacheValue.text = it.toString() }
+        settingsViewModel.vlcFileCachingMs.observe(this) { textVlcFileCacheValue.text = it.toString() }
         settingsViewModel.isTunnelingEnabled.observe(this) { switchTunneling.isChecked = it }
         settingsViewModel.isMapDvToHevcEnabled.observe(this) { switchDv.isChecked = it }
         // AFR
