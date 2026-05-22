@@ -19,6 +19,16 @@ class SettingsRepository private constructor(context: Context) {
         const val RESUME_ALWAYS = 1
         const val RESUME_NEVER = 2
 
+        const val PLAYBACK_ENGINE_AUTO = "AUTO"
+        const val PLAYBACK_ENGINE_MEDIA3_ONLY = "MEDIA3_ONLY"
+        const val PLAYBACK_ENGINE_VLC_ONLY = "VLC_ONLY"
+        const val PLAYBACK_ENGINE_VLC_FALLBACK = "VLC_FALLBACK"
+
+        const val VLC_HW_AUTO = "AUTO"
+        const val VLC_HW_DISABLED = "DISABLED"
+        const val VLC_HW_DECODING = "DECODING"
+        const val VLC_HW_FULL = "FULL"
+
         @Volatile
         private var instance: SettingsRepository? = null
 
@@ -174,5 +184,16 @@ class SettingsRepository private constructor(context: Context) {
         }
     }
 
+
+    fun getPlaybackEngine(): String = prefs.getString("playback_engine", PLAYBACK_ENGINE_AUTO) ?: PLAYBACK_ENGINE_AUTO
+    fun setPlaybackEngine(value: String) = prefs.edit { putString("playback_engine", value) }
+    fun isFallbackOnVideoDecoderErrorEnabled(): Boolean = prefs.getBoolean("fallback_on_video_decoder_error", true)
+    fun setFallbackOnVideoDecoderErrorEnabled(enabled: Boolean) = prefs.edit { putBoolean("fallback_on_video_decoder_error", enabled) }
+    fun getVlcHardwareAccelerationMode(): String = prefs.getString("vlc_hardware_acceleration", VLC_HW_AUTO) ?: VLC_HW_AUTO
+    fun setVlcHardwareAccelerationMode(value: String) = prefs.edit { putString("vlc_hardware_acceleration", value) }
+    fun getVlcNetworkCachingMs(): Int = prefs.getInt("vlc_network_caching_ms", 1500)
+    fun setVlcNetworkCachingMs(value: Int) = prefs.edit { putInt("vlc_network_caching_ms", value) }
+    fun getVlcFileCachingMs(): Int = prefs.getInt("vlc_file_caching_ms", 1500)
+    fun setVlcFileCachingMs(value: Int) = prefs.edit { putInt("vlc_file_caching_ms", value) }
 
 }
