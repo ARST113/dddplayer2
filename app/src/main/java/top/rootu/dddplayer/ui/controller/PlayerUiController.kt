@@ -581,6 +581,15 @@ class PlayerUiController(private val rootView: View) {
         }
     }
 
+    fun updatePlaylistSelectedIndex(index: Int) {
+        playlistAdapter?.setCurrentIndex(index)
+        val recycler = playlistDialog?.findViewById<RecyclerView>(R.id.playlist_recycler)
+        recycler?.post {
+            recycler.scrollToPosition(index)
+            recycler.findViewHolderForAdapterPosition(index)?.itemView?.requestFocus()
+        }
+    }
+
     fun showPlaylistDialog(
         items: List<MediaItem>,
         currentIndex: Int,

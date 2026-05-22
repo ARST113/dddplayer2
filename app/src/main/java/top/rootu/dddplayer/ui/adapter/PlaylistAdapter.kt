@@ -28,6 +28,7 @@ class PlaylistAdapter(
     private var showIndexBadge: Boolean = true
 
     fun setCurrentIndex(index: Int) {
+        android.util.Log.i("DDDPlayer/UI", "playlistAdapter.setSelectedIndex old=$currentPlayingIndex new=$index")
         val oldIndex = currentPlayingIndex
         currentPlayingIndex = index
         if (oldIndex in 0 until itemCount) notifyItemChanged(oldIndex)
@@ -49,7 +50,9 @@ class PlaylistAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        holder.bind(getItem(position), position, position == currentPlayingIndex)
+        val selected = position == currentPlayingIndex
+        android.util.Log.d("DDDPlayer/UI", "playlistAdapter.bind position=$position selected=$selected")
+        holder.bind(getItem(position), position, selected)
     }
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
