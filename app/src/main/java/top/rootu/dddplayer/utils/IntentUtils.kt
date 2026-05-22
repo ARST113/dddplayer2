@@ -15,6 +15,38 @@ import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
+    private fun normalizePlaybackUri(uri: Uri?): String {
+        if (uri == null) return ""
+        val clean = uri.buildUpon().fragment(null).build()
+        return clean.toString().replace("%20", " ").trim()
+    }
+
+    private fun getQueryParamSafe(uri: Uri?, key: String): String? = try {
+        uri?.getQueryParameter(key)
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun torrServerIdentity(uri: Uri?): Pair<String?, String?> {
+        return getQueryParamSafe(uri, "link") to getQueryParamSafe(uri, "index")
+    }
+
+    private fun lastPathSegmentNormalized(uri: Uri?): String? {
+        return uri?.lastPathSegment?.replace("%20", " ")?.trim()?.lowercase()
+    }
+
+    private fun samePlaybackItem(a: Uri?, b: Uri?): Boolean {
+        if (a == null || b == null) return false
+        val na = normalizePlaybackUri(a)
+        val nb = normalizePlaybackUri(b)
+        if (na == nb) return true
+        val (aLink, aIndex) = torrServerIdentity(a)
+        val (bLink, bIndex) = torrServerIdentity(b)
+        if (!aLink.isNullOrBlank() && !bLink.isNullOrBlank() && aLink == bLink && aIndex == bIndex) return true
+        val aPath = lastPathSegmentNormalized(a)
+        val bPath = lastPathSegmentNormalized(b)
+        return !aPath.isNullOrBlank() && aPath == bPath
+    }
 
     /**
      * Парсит Intent и возвращает список медиа-элементов и стартовую позицию.
@@ -116,7 +148,8 @@ object IntentUtils {
         val headersMap = parseHeaders(extras)
 
         val playlist = mutableListOf<MediaItem>()
-        var startIndex = extras.getInt("start_index", 0)
+        val extrasStartIndex = extras.getInt("start_index", 0)
+        var matchedStartIndex: Int? = null
 
         for (i in videoListUris.indices) {
             val uri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri())?.buildUpon()?.fragment(null)?.build() ?: continue
@@ -131,9 +164,9 @@ object IntentUtils {
                 emptyList()
             }
 
-            // Если dataUri совпадает с текущим элементом списка, берем позицию из extras
-            val pos = if (cleanDataUri != null && uri == cleanDataUri) getLongExtraCompat(extras, "position", 0L) else 0L
-            if (cleanDataUri != null && uri == cleanDataUri) startIndex = i
+            val isCurrent = samePlaybackItem(uri, cleanDataUri)
+            if (isCurrent) matchedStartIndex = playlist.size
+            val pos = if (isCurrent) getLongExtraCompat(extras, "position", 0L) else 0L
 
             playlist.add(
                 MediaItem(
@@ -147,7 +180,16 @@ object IntentUtils {
                 )
             )
         }
-        startIndex = startIndex.coerceIn(0, (playlist.size - 1).coerceAtLeast(0))
+        val startIndex = when {
+            playlist.isEmpty() -> 0
+            cleanDataUri != null && matchedStartIndex != null -> matchedStartIndex!!
+            cleanDataUri != null -> 0
+            else -> extrasStartIndex.coerceIn(0, playlist.lastIndex)
+        }
+        android.util.Log.i(
+            "DDDPlayer/Intent",
+            "parseInternalPlaylist dataUri=$cleanDataUri extrasStartIndex=$extrasStartIndex matchedStartIndex=$matchedStartIndex finalStartIndex=$startIndex playlistSize=${playlist.size}"
+        )
         return Pair(playlist, startIndex)
     }
 
