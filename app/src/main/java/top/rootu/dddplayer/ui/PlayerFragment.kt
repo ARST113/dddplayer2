@@ -1198,11 +1198,18 @@ class PlayerFragment : Fragment() {
         if (settingsViewModel.isSettingsPanelVisible.value != true) return
         val type = settingsViewModel.currentSettingType.value ?: return
         val context = requireContext()
+        val optionsData = viewModel.getOptionsForSetting(type, context)
 
         val valueStr = when (type) {
             SettingType.AUDIO_TRACK -> {
-                val track = viewModel.currentAudioTrack.value
-                track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
+                if (viewModel.getActiveBackendId() == "VLC") {
+                    optionsData?.let { (labels, selectedIndex) ->
+                        labels.getOrNull(selectedIndex.coerceAtLeast(0))
+                    } ?: viewModel.getCurrentAudioLabelForUi(context)
+                } else {
+                    val track = viewModel.currentAudioTrack.value
+                    track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
+                }
             }
             SettingType.SUBTITLES -> {
                 val track = viewModel.currentSubtitleTrack.value
@@ -1211,7 +1218,10 @@ class PlayerFragment : Fragment() {
         }
 
         ui.updateSettingsText(type, valueStr, true, android.graphics.Color.WHITE)
-        val optionsData = viewModel.getOptionsForSetting(type, context)
+        android.util.Log.i(
+            "DDDPlayer/UI",
+            "settingsPanel.value type=$type value=$valueStr selectedIndex=${optionsData?.second} source=${viewModel.getActiveBackendId()}"
+        )
         ui.updateSettingsOptions(optionsData)
     }
 

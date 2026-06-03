@@ -134,10 +134,11 @@ object TrackLogic {
     fun buildTrackLabel(option: TrackOption, context: Context): String {
         if (option.isOff) return context.getString(R.string.track_off)
 
-        val format = option.format ?: return context.getString(R.string.track_unknown)
+        val fallbackTitle = option.nameFromMeta?.trim()?.takeIf { it.isNotEmpty() }
+        val format = option.format ?: return fallbackTitle ?: context.getString(R.string.track_unknown)
 
         // Приоритет: Имя из метаданных -> Label из ExoPlayer -> Язык
-        var title = option.nameFromMeta?.trim()
+        var title = fallbackTitle
 
         if (title.isNullOrEmpty()) {
             title = format.label
