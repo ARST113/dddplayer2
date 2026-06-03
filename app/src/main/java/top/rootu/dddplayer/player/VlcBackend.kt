@@ -7,7 +7,9 @@ import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.interfaces.IMedia
+import top.rootu.dddplayer.R
 import top.rootu.dddplayer.data.SettingsRepository
+import top.rootu.dddplayer.model.SubtitleItem
 
 class VlcBackend(
     context: Context,
@@ -25,6 +27,7 @@ class VlcBackend(
     private var lastKnownTimeMs: Long = 0L
     private var lastKnownDurationMs: Long = 0L
     private var lastSelectedAudioTrackId: Int? = null
+    private var lastSelectedSubtitleTrackId: Int? = null
 
     override fun attachSurfaceHolder(surfaceHolder: SurfaceHolder?) {
         holder = surfaceHolder
@@ -38,6 +41,10 @@ class VlcBackend(
     }
 
     override fun prepare(uri: Uri, headers: Map<String, String>, startPositionMs: Long) {
+        prepare(uri, headers, startPositionMs, emptyList())
+    }
+
+    fun prepare(uri: Uri, headers: Map<String, String>, startPositionMs: Long, subtitles: List<SubtitleItem>) {
         release()
         val options = mutableListOf(
             "--network-caching=${settingsRepository.getVlcNetworkCachingMs()}",
@@ -91,6 +98,7 @@ class VlcBackend(
                         lastKnownTimeMs = player.time
                         lastKnownDurationMs = player.length
                         refreshAudioTrackState()
+                        refreshSubtitleTrackState()
                         listener?.onPlaying()
                         listener?.onPositionChanged(getPositionMs(), getDurationMs())
                     }
@@ -105,6 +113,11 @@ class VlcBackend(
             }
             val media = Media(libVlc, uri)
             headers.forEach { (k, v) -> media.addOption(":http-header=$k=$v") }
+            subtitles.forEach { subtitle ->
+                val slave = IMedia.Slave(IMedia.Slave.Type.Subtitle, 4, subtitle.uri.toString())
+                media.addSlave(slave)
+                android.util.Log.i("DDDPlayer/VLC", "addSubtitleSlave uri=${subtitle.uri} name=${subtitle.name ?: subtitle.filename}")
+            }
             player.media = media
             media.release()
             player.play()
@@ -165,11 +178,70 @@ class VlcBackend(
         return ok
     }
 
+    private fun readRawVlcSubtitleTracks(): List<BackendSubtitleTrack> {
+        val list = mediaPlayer?.spuTracks ?: return emptyList()
+        val mapped = list.map { track ->
+            val label = if (track.id < 0) {
+                appContext.getString(R.string.track_off)
+            } else {
+                track.name ?: "Subtitle ${track.id}"
+            }
+            BackendSubtitleTrack(track.id, label)
+        }
+        return if (mapped.any { it.id == -1 }) {
+            mapped
+        } else {
+            listOf(BackendSubtitleTrack(-1, appContext.getString(R.string.track_off))) + mapped
+        }
+    }
+
+    private fun readRawSelectedSubtitleTrackId(): Int? {
+        val id = mediaPlayer?.spuTrack
+        return id ?: lastSelectedSubtitleTrackId
+    }
+
+    fun getSubtitleTracks(): List<BackendSubtitleTrack> {
+        val tracks = readRawVlcSubtitleTracks()
+        val selectedId = readRawSelectedSubtitleTrackId() ?: -1
+        return tracks.map { it.copy(selected = it.id == selectedId) }
+    }
+
+    fun getSelectedSubtitleTrack(): Int? {
+        val selectedId = readRawSelectedSubtitleTrackId() ?: -1
+        val tracks = readRawVlcSubtitleTracks()
+        val valid = selectedId.takeIf { id -> tracks.any { it.id == id } }
+        if (valid != null) {
+            lastSelectedSubtitleTrackId = valid
+            return valid
+        }
+        return lastSelectedSubtitleTrackId?.takeIf { id -> tracks.any { it.id == id } }
+            ?: tracks.firstOrNull { it.id == -1 }?.id
+    }
+
+    fun selectSubtitleTrack(trackId: Int): Boolean {
+        val ok = mediaPlayer?.setSpuTrack(trackId) == true || mediaPlayer?.spuTrack == trackId
+        val selected = mediaPlayer?.spuTrack
+        if (ok) {
+            lastSelectedSubtitleTrackId = trackId
+            refreshSubtitleTrackState()
+        }
+        android.util.Log.i("DDDPlayer/VLC", "selectSubtitleTrack id=$trackId ok=$ok selected=$selected tracks=${getSubtitleTracks()}")
+        return ok
+    }
+
     private fun refreshAudioTrackState() {
         val tracks = mediaPlayer?.audioTracks?.filter { it.id != -1 } ?: return
         val direct = mediaPlayer?.audioTrack
         if (direct != null && direct != -1 && tracks.any { it.id == direct }) {
             lastSelectedAudioTrackId = direct
+        }
+    }
+
+    private fun refreshSubtitleTrackState() {
+        val tracks = mediaPlayer?.spuTracks ?: return
+        val direct = mediaPlayer?.spuTrack
+        if (direct != null && tracks.any { it.id == direct }) {
+            lastSelectedSubtitleTrackId = direct
         }
     }
 
@@ -181,6 +253,7 @@ class VlcBackend(
         libVlc?.release()
         libVlc = null
         lastSelectedAudioTrackId = null
+        lastSelectedSubtitleTrackId = null
         pendingSeekApplyMs = 0L
     }
 }

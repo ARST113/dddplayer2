@@ -1236,8 +1236,14 @@ class PlayerFragment : Fragment() {
                 compactTrackBadgeLabel(fullLabel)
             }
             SettingType.SUBTITLES -> {
-                val track = viewModel.currentSubtitleTrack.value
-                track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
+                if (viewModel.getActiveBackendId() == "VLC") {
+                    optionsData?.let { (labels, selectedIndex) ->
+                        labels.getOrNull(selectedIndex.coerceAtLeast(0))
+                    } ?: viewModel.getCurrentSubtitleLabelForUi(context)
+                } else {
+                    val track = viewModel.currentSubtitleTrack.value
+                    track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
+                }
             }
         }
         val displayOptionsData = if (type == SettingType.AUDIO_TRACK) {

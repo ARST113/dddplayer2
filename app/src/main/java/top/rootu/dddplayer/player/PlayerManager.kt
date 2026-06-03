@@ -606,14 +606,13 @@ class PlayerManager(
                 mediaSession = null
             }
             // TODO(MVP): controller-driven next/previous for VLC_ONLY should reopen item via PlayerManager/loadPlaylist.
-            // TODO(MVP): VLC track UI/subtitle slave support not implemented yet.
             // TODO(MVP): persist contentKey -> preferred backend (AUTO) after successful fallback.
             val selected = items.getOrNull(startIndex) ?: return
             val backend = vlcBackend ?: VlcBackend(appContext, settingsRepo).also { vlcBackend = it }
             backend.attachSurfaceHolder(boundSurfaceHolder)
             attachVlcListener(backend)
             Log.i(vlcTag, "VLC prepare uri=${selected.uri}")
-            backend.prepare(selected.uri, selected.headers, startPosMs)
+            backend.prepare(selected.uri, selected.headers, startPosMs, selected.subtitles)
             activeBackend = backend
             Log.i(backendTag, "Active backend=VLC")
             return
@@ -733,7 +732,7 @@ class PlayerManager(
             val backend = vlcBackend ?: VlcBackend(appContext, settingsRepo).also { vlcBackend = it }
             backend.attachSurfaceHolder(boundSurfaceHolder)
             attachVlcListener(backend)
-            backend.prepare(item.uri, item.headers, startPositionMs)
+            backend.prepare(item.uri, item.headers, startPositionMs, item.subtitles)
             activeBackend = backend
             Log.i(vlcTag, "playIndex VLC index=$index uri=${item.uri}")
             return true
@@ -759,6 +758,9 @@ class PlayerManager(
     fun getVlcAudioTracks(): List<BackendAudioTrack> = vlcBackend?.getAudioTracks() ?: emptyList()
     fun getVlcSelectedAudioTrackId(): Int? = vlcBackend?.getSelectedAudioTrack()
     fun selectVlcAudioTrackById(id: Int): Boolean = vlcBackend?.selectAudioTrack(id) == true
+    fun getVlcSubtitleTracks(): List<BackendSubtitleTrack> = vlcBackend?.getSubtitleTracks() ?: emptyList()
+    fun getVlcSelectedSubtitleTrackId(): Int? = vlcBackend?.getSelectedSubtitleTrack()
+    fun selectVlcSubtitleTrackById(id: Int): Boolean = vlcBackend?.selectSubtitleTrack(id) == true
     fun getCurrentAudioTrackLabel(): String? {
         return when (activeBackend) {
         vlcBackend -> {
@@ -816,7 +818,7 @@ class PlayerManager(
         backend.attachSurfaceHolder(boundSurfaceHolder)
         attachVlcListener(backend)
         Log.i(vlcTag, "VLC prepare uri=${item.uri}")
-        backend.prepare(item.uri, item.headers, pos)
+        backend.prepare(item.uri, item.headers, pos, item.subtitles)
         Log.i(vlcTag, "Fallback seek positionMs=$pos")
         vlcBackend = backend
         activeBackend = backend
