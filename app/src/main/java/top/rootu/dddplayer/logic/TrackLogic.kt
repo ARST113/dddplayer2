@@ -160,6 +160,35 @@ object TrackLogic {
         return "$title$techInfoStr ($langCode)"
     }
 
+    fun compactTrackLabel(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return trimmed
+
+        val techInfo = Regex("""\[(.+?)]""")
+            .find(trimmed)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val beforeTech = trimmed.substringBefore(" [").trim()
+        val withoutLangCode = beforeTech
+            .replace(Regex("""\s+\([a-z]{2,3}\)$""", RegexOption.IGNORE_CASE), "")
+            .trim()
+        val beforeDetails = withoutLangCode.substringBefore(" (").trim()
+        val withoutLanguageWord = beforeDetails
+            .replace(Regex("""(?i)\s+(russian|rus|japanese|jpn|english|eng)$"""), "")
+            .trim()
+        val title = withoutLanguageWord
+            .takeIf { it.isNotEmpty() }
+            ?: beforeDetails.takeIf { it.isNotEmpty() }
+            ?: withoutLangCode.takeIf { it.isNotEmpty() }
+            ?: trimmed
+
+        return listOfNotNull(title, techInfo)
+            .joinToString(" ")
+            .ifBlank { trimmed }
+    }
+
     private fun getTechInfo(format: Format): String {
         val mime = format.sampleMimeType ?: return ""
 

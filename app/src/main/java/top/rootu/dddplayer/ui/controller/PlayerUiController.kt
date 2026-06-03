@@ -3,6 +3,7 @@ package top.rootu.dddplayer.ui.controller
 import android.app.Dialog
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -11,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextClock
@@ -29,6 +31,7 @@ import coil.load
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.ResizeMode
+import top.rootu.dddplayer.model.TorrentPieceHealth
 import top.rootu.dddplayer.ui.adapter.OptionsAdapter
 import top.rootu.dddplayer.ui.adapter.PlaylistAdapter
 import top.rootu.dddplayer.ui.widget.OutlineTextClock
@@ -75,6 +78,7 @@ class PlayerUiController(private val rootView: View) {
     val badgeResolution: TextView = topInfoPanel.findViewById(R.id.badge_resolution)
     val badgeAudio: TextView = topInfoPanel.findViewById(R.id.badge_audio)
     val badgeSubtitle: TextView = topInfoPanel.findViewById(R.id.badge_subtitle)
+    private val torrentPieceDots: LinearLayout = topInfoPanel.findViewById(R.id.torrent_piece_dots)
 
     // Controls
     val playPauseButton: ImageButton = controlsView.findViewById(R.id.button_play_pause)
@@ -660,6 +664,49 @@ class PlayerUiController(private val rootView: View) {
             SettingType.AUDIO_TRACK -> context.getString(R.string.setting_audio_track)
             SettingType.SUBTITLES -> context.getString(R.string.setting_subtitles)
         }
+    }
+
+    fun updateTorrentPieces(health: TorrentPieceHealth?) {
+        torrentPieceDots.removeAllViews()
+
+        if (health == null) {
+            torrentPieceDots.isVisible = false
+            return
+        }
+
+        torrentPieceDots.isVisible = true
+
+        repeat(health.totalDots) { index ->
+            val dot = View(rootView.context)
+            val size = dp(7)
+            val margin = dp(3)
+
+            dot.layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginStart = margin
+                marginEnd = margin
+            }
+
+            val color = when {
+                index == 0 -> when (health.level) {
+                    TorrentPieceHealth.Level.GREEN -> "#7ED957".toColorInt()
+                    TorrentPieceHealth.Level.YELLOW -> "#FFD54A".toColorInt()
+                    TorrentPieceHealth.Level.RED -> "#FF5252".toColorInt()
+                }
+                index < health.activeDots -> Color.WHITE
+                else -> "#66FFFFFF".toColorInt()
+            }
+
+            dot.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+            }
+
+            torrentPieceDots.addView(dot)
+        }
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * rootView.resources.displayMetrics.density + 0.5f).toInt()
     }
 
     fun updateBufferingState(isBuffering: Boolean, percent: Int) {

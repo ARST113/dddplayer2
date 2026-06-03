@@ -25,24 +25,34 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.manifest.DashManifest
 import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeEvent
 import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.data.VideoSettings
+import top.rootu.dddplayer.data.torrserver.TorrServerCacheClient
+import top.rootu.dddplayer.data.torrserver.TorrServerStreamContext
+import top.rootu.dddplayer.data.torrserver.TorrServerStreamContextParser
 import top.rootu.dddplayer.logic.SettingsMutator
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
 import top.rootu.dddplayer.model.ResizeMode
+import top.rootu.dddplayer.model.TorrentPieceHealth
+import top.rootu.dddplayer.player.BackendAudioTrack
 import top.rootu.dddplayer.player.PlayerManager
 import top.rootu.dddplayer.utils.MediaFormatHelper
 import top.rootu.dddplayer.utils.afr.RuntimeFpsDetector
 import top.rootu.dddplayer.utils.getString
 import androidx.media3.common.MediaItem as Media3MediaItem
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 
@@ -240,6 +250,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val bufferedPercentage: LiveData<Int> = _bufferedPercentage
     private val _bufferedPosition = MutableLiveData(0L)
     val bufferedPosition: LiveData<Long> = _bufferedPosition
+    private val _torrentPieceHealth = MutableLiveData<TorrentPieceHealth?>()
+    val torrentPieceHealth: LiveData<TorrentPieceHealth?> = _torrentPieceHealth
     private val _playbackSpeed = MutableLiveData(PlaybackSpeed.X1_00)
     val playbackSpeed: LiveData<PlaybackSpeed> = _playbackSpeed
 
@@ -274,6 +286,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Player Manager
     private val playerManager: PlayerManager
+    private val torrServerCacheClient = TorrServerCacheClient(
+        OkHttpClient.Builder()
+            .connectTimeout(2, TimeUnit.SECONDS)
+            .readTimeout(2, TimeUnit.SECONDS)
+            .build()
+    )
+    private var torrentPiecesJob: Job? = null
+    private var torrentStreamContext: TorrServerStreamContext? = null
 
     // Безопасный доступ к плееру (может быть null, если не инициализирован)
     val player: ExoPlayer? get() = playerManager.exoPlayer
@@ -347,6 +367,64 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             handler.postDelayed(this, 200)
         }
+    }
+
+    fun startTorrentPiecesPolling(streamUrl: String?) {
+        val context = TorrServerStreamContextParser.parse(streamUrl)
+        if (context == null) {
+            Log.d("DDDPlayer/TorrServer", "cache polling skipped url=$streamUrl")
+            stopTorrentPiecesPolling()
+            return
+        }
+
+        if (torrentStreamContext == context && torrentPiecesJob?.isActive == true) {
+            return
+        }
+
+        torrentPiecesJob?.cancel()
+        torrentStreamContext = context
+        _torrentPieceHealth.postValue(null)
+
+        Log.i(
+            "DDDPlayer/TorrServer",
+            "cache polling start base=${context.baseUrl} hash=${context.hash} index=${context.fileIndex}"
+        )
+
+        torrentPiecesJob = viewModelScope.launch {
+            while (isActive) {
+                val health = runCatching {
+                    torrServerCacheClient.loadPieceHealth(
+                        torrServerBaseUrl = context.baseUrl,
+                        hash = context.hash
+                    )
+                }.onFailure {
+                    Log.d("DDDPlayer/TorrServer", "cache polling failed: ${it.message}")
+                }.getOrNull()
+
+                _torrentPieceHealth.postValue(health)
+                Log.d("DDDPlayer/TorrServer", "cache health=$health")
+
+                delay(2_000L)
+            }
+        }
+    }
+
+    fun stopTorrentPiecesPolling() {
+        torrentPiecesJob?.cancel()
+        torrentPiecesJob = null
+        torrentStreamContext = null
+        _torrentPieceHealth.postValue(null)
+    }
+
+    private fun restartTorrentPiecesPollingForCurrentItem(reason: String) {
+        val streamUrl = playerManager.getCurrentUri()
+            ?: _currentPlaylist.value
+                ?.getOrNull(playerManager.getCurrentWindowIndex())
+                ?.uri
+                ?.toString()
+
+        Log.d("DDDPlayer/TorrServer", "cache polling restart reason=$reason url=$streamUrl")
+        startTorrentPiecesPolling(streamUrl)
     }
 
 
@@ -813,6 +891,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             Log.d(TAG, "Media item transition generation=$generation uri=$uriForSettings")
             val title = mediaItem?.mediaMetadata?.title?.toString()
             currentUri = uriForSettings
+            startTorrentPiecesPolling(uriForSettings)
             _videoTitle.value = title ?: mediaItem?.localConfiguration?.uri?.lastPathSegment
 
             _hasPrevious.value = p.hasPreviousMediaItem()
@@ -1153,13 +1232,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun isBackendPlaying(): Boolean = playerManager.isPlaying()
 
     fun getActiveBackendId(): String = playerManager.getActiveBackendId()
-    fun getVlcAudioTracksForUi(): List<top.rootu.dddplayer.player.BackendAudioTrack> = playerManager.getVlcAudioTracks()
+    fun getVlcAudioTracksForUi(): List<BackendAudioTrack> = playerManager.getVlcAudioTracks()
     fun getVlcSelectedAudioTrackIdForUi(): Int? = playerManager.getVlcSelectedAudioTrackId()
     fun getCurrentAudioLabelForUi(context: Context): String {
         val tracks = playerManager.getVlcAudioTracks()
         if (tracks.isEmpty()) return context.getString(R.string.track_unknown)
         val selectedId = playerManager.getVlcSelectedAudioTrackId()
-        return tracks.firstOrNull { it.id == selectedId }?.label ?: tracks.firstOrNull()?.label ?: context.getString(R.string.track_unknown)
+        val selectedIndex = tracks.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 } ?: 0
+        val selectedTrack = tracks.getOrNull(selectedIndex) ?: tracks.firstOrNull()
+        return selectedTrack
+            ?.let { TrackLogic.buildTrackLabel(buildVlcAudioTrackOption(it, selectedIndex), context) }
+            ?: context.getString(R.string.track_unknown)
     }
 
     private fun refreshCurrentPlaylistUiState(reason: String) {
@@ -1177,19 +1260,59 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val tracks = playerManager.getVlcAudioTracks()
         val selectedId = playerManager.getVlcSelectedAudioTrackId()
         val selectedTrack = tracks.firstOrNull { it.id == selectedId } ?: tracks.firstOrNull { it.selected } ?: tracks.firstOrNull()
-        _currentAudioTrack.value = selectedTrack?.let {
-            TrackOption(format = null, nameFromMeta = it.label, index = it.id, group = null, trackIndex = it.id)
-        }
-        Log.i("DDDPlayer/VLC", "topAudioBadge.text=${selectedTrack?.label} source=VLC selectedAudioTrackId=$selectedId tracks=${tracks.map { "${it.id}:${it.label}" }}")
+        val selectedIndex = tracks.indexOfFirst { it.id == selectedTrack?.id }.coerceAtLeast(0)
+        _currentAudioTrack.value = selectedTrack?.let { buildVlcAudioTrackOption(it, selectedIndex) }
+        val displayLabel = _currentAudioTrack.value
+            ?.let { TrackLogic.compactTrackLabel(TrackLogic.buildTrackLabel(it, getApplication<Application>().applicationContext)) }
+        Log.i("DDDPlayer/VLC", "topAudioBadge.text=$displayLabel raw=${selectedTrack?.label} source=VLC selectedAudioTrackId=$selectedId tracks=${tracks.map { "${it.id}:${it.label}" }}")
+    }
+
+    private fun buildVlcAudioTrackOption(track: BackendAudioTrack, ordinal: Int): TrackOption {
+        val media3Options = audioOptions.filterNot { it.isOff }
+        val matched = media3Options.firstOrNull { it.index == track.id }
+            ?: media3Options.getOrNull(ordinal)
+            ?: media3Options.firstOrNull { option ->
+                val vlcName = normalizeTrackName(track.label)
+                val media3Name = normalizeTrackName(option.nameFromMeta ?: option.format?.label)
+                !vlcName.isNullOrBlank() &&
+                    !media3Name.isNullOrBlank() &&
+                    (media3Name.contains(vlcName) || vlcName.contains(media3Name))
+            }
+
+        return matched?.copy(
+            nameFromMeta = track.label,
+            index = track.id,
+            trackIndex = track.id
+        ) ?: TrackOption(
+            format = null,
+            nameFromMeta = track.label,
+            index = track.id,
+            group = null,
+            trackIndex = track.id
+        )
     }
 
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun setPlaybackActive(active: Boolean) { if (active) playerManager.play() else playerManager.pause() }
     fun nextTrack() {
-        if (playerManager.hasNext()) { saveCurrentSettings(); pendingSeekReason = "manual_next"; playerManager.next(); refreshCurrentPlaylistUiState("manual_next"); flushProgress("manual_next", force = true, saveSettings = false) }
+        if (playerManager.hasNext()) {
+            saveCurrentSettings()
+            pendingSeekReason = "manual_next"
+            playerManager.next()
+            refreshCurrentPlaylistUiState("manual_next")
+            restartTorrentPiecesPollingForCurrentItem("manual_next")
+            flushProgress("manual_next", force = true, saveSettings = false)
+        }
     }
     fun prevTrack() {
-        if (playerManager.hasPrevious()) { saveCurrentSettings(); pendingSeekReason = "manual_previous"; playerManager.previous(); refreshCurrentPlaylistUiState("manual_previous"); flushProgress("manual_previous", force = true, saveSettings = false) }
+        if (playerManager.hasPrevious()) {
+            saveCurrentSettings()
+            pendingSeekReason = "manual_previous"
+            playerManager.previous()
+            refreshCurrentPlaylistUiState("manual_previous")
+            restartTorrentPiecesPollingForCurrentItem("manual_previous")
+            flushProgress("manual_previous", force = true, saveSettings = false)
+        }
     }
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
@@ -1220,6 +1343,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _currentPlaylist.value = items
         val startPos = startPosMs ?: items.getOrNull(startIndex)?.startPositionMs ?: 0L
         playerManager.loadPlaylist(items, startIndex, startPos)
+        startTorrentPiecesPolling(items.getOrNull(startIndex)?.uri?.toString())
         viewModelScope.launch { repository.cleanupOldSettings() }
     }
 
@@ -1395,6 +1519,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _videoDisabledError.value = null
         playerManager.playIndex(index, 0L)
         refreshCurrentPlaylistUiState("playlist_item_click")
+        restartTorrentPiecesPollingForCurrentItem("playlist_item_click")
         flushProgress("media_item_changed", force = true, saveSettings = false)
     }
 
@@ -1421,7 +1546,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun getAudioTrackMenuItems(context: Context): List<MenuItem> {
         if (playerManager.getActiveBackendId() == "VLC") {
             val selected = playerManager.getVlcSelectedAudioTrackId()
-            return playerManager.getVlcAudioTracks().map { t -> MenuItem(t.id.toString(), t.label, isSelected = t.id == selected) }
+            return playerManager.getVlcAudioTracks().mapIndexed { index, track ->
+                val label = TrackLogic.compactTrackLabel(
+                    TrackLogic.buildTrackLabel(buildVlcAudioTrackOption(track, index), context)
+                )
+                MenuItem(track.id.toString(), label, isSelected = track.id == selected)
+            }
         }
         return audioOptions.mapIndexed { index, option ->
             val name = TrackLogic.buildTrackLabel(option, context)
@@ -1747,7 +1877,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (playerManager.getActiveBackendId() == "VLC") {
                     val tracks = playerManager.getVlcAudioTracks()
                     val selectedId = playerManager.getVlcSelectedAudioTrackId()
-                    val labels = tracks.map { it.label }
+                    val labels = tracks.mapIndexed { index, track ->
+                        TrackLogic.buildTrackLabel(buildVlcAudioTrackOption(track, index), context)
+                    }
                     val selectedIndex = tracks.indexOfFirst { it.id == selectedId }
                         .takeIf { it >= 0 }
                         ?: 0
@@ -1844,6 +1976,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        stopTorrentPiecesPolling()
         handler.removeCallbacks(progressUpdater)
         playerManager.releasePlayer(isFinalRelease = true, saveState = false)
     }

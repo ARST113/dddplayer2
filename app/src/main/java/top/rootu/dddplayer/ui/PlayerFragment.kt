@@ -1006,7 +1006,7 @@ class PlayerFragment : Fragment() {
         viewModel.playlistSize.observe(viewLifecycleOwner) { ui.buttonPlaylist.isVisible = it > 1 }
         viewModel.currentQualityName.observe(viewLifecycleOwner) { ui.buttonQuality.text = it }
 
-        viewModel.videoResolution.observe(viewLifecycleOwner) { ui.badgeResolution.text = it }
+        viewModel.videoResolution.observe(viewLifecycleOwner) { ui.badgeResolution.text = compactVideoInfoBadge(it) }
         viewModel.videoAspectRatio.observe(viewLifecycleOwner) { ui.setAspectRatio(it) }
         viewModel.audioOutputInfo.observe(viewLifecycleOwner) { updateAudioBadge() }
         viewModel.currentAudioTrack.observe(viewLifecycleOwner) { trackOption ->
@@ -1050,6 +1050,10 @@ class PlayerFragment : Fragment() {
         viewModel.bufferedPosition.observe(viewLifecycleOwner) { bufferedPos ->
             val safeBuffered = (bufferedPos as Long?).orEmptyTime().coerceIn(0L, Int.MAX_VALUE.toLong())
             ui.seekBar.secondaryProgress = safeBuffered.toInt()
+        }
+
+        viewModel.torrentPieceHealth.observe(viewLifecycleOwner) { health ->
+            ui.updateTorrentPieces(health)
         }
 
         // Панель настроек (SettingsViewModel)
@@ -1155,6 +1159,25 @@ class PlayerFragment : Fragment() {
         ui.updateTimeLabels(currentPos, duration, speed, isLive, liveOffset)
     }
 
+    private fun compactVideoInfoBadge(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return trimmed
+
+        Regex("""(?i)\b(\d{3,5})\s*x\s*(\d{3,5})\b""")
+            .find(trimmed)
+            ?.let { return "${it.groupValues[1]}x${it.groupValues[2]}" }
+
+        Regex("""(?i)\b(\d{3,5}p)\b""")
+            .find(trimmed)
+            ?.let { return it.groupValues[1] }
+
+        return trimmed
+    }
+
+    private fun compactTrackBadgeLabel(raw: String): String {
+        return TrackLogic.compactTrackLabel(raw)
+    }
+
     private fun showResumeDialog(position: Long, duration: Long) {
         val timeStr = ui.formatTime(position)
         val totalStr = ui.formatTime(duration)
@@ -1202,7 +1225,7 @@ class PlayerFragment : Fragment() {
 
         val valueStr = when (type) {
             SettingType.AUDIO_TRACK -> {
-                if (viewModel.getActiveBackendId() == "VLC") {
+                val fullLabel = if (viewModel.getActiveBackendId() == "VLC") {
                     optionsData?.let { (labels, selectedIndex) ->
                         labels.getOrNull(selectedIndex.coerceAtLeast(0))
                     } ?: viewModel.getCurrentAudioLabelForUi(context)
@@ -1210,19 +1233,27 @@ class PlayerFragment : Fragment() {
                     val track = viewModel.currentAudioTrack.value
                     track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
                 }
+                compactTrackBadgeLabel(fullLabel)
             }
             SettingType.SUBTITLES -> {
                 val track = viewModel.currentSubtitleTrack.value
                 track?.let { TrackLogic.buildTrackLabel(it, context) } ?: ""
             }
         }
+        val displayOptionsData = if (type == SettingType.AUDIO_TRACK) {
+            optionsData?.let { (labels, selectedIndex) ->
+                labels.map { compactTrackBadgeLabel(it) } to selectedIndex
+            }
+        } else {
+            optionsData
+        }
 
         ui.updateSettingsText(type, valueStr, true, android.graphics.Color.WHITE)
         android.util.Log.i(
             "DDDPlayer/UI",
-            "settingsPanel.value type=$type value=$valueStr selectedIndex=${optionsData?.second} source=${viewModel.getActiveBackendId()}"
+            "settingsPanel.value type=$type value=$valueStr selectedIndex=${displayOptionsData?.second} source=${viewModel.getActiveBackendId()}"
         )
-        ui.updateSettingsOptions(optionsData)
+        ui.updateSettingsOptions(displayOptionsData)
     }
 
     private fun updateAudioBadge() {
@@ -1233,11 +1264,9 @@ class PlayerFragment : Fragment() {
             val track = viewModel.currentAudioTrack.value
             track?.let { TrackLogic.buildTrackLabel(it, requireContext()) } ?: getString(R.string.track_unknown)
         }
-        val audioOut = viewModel.audioOutputInfo.value ?: ""
-
-        val text = if (audioOut.isNotEmpty()) getString(R.string.audio_badge_format, res, audioOut) else res
+        val text = compactTrackBadgeLabel(res)
         ui.badgeAudio.text = text
-        android.util.Log.i("DDDPlayer/UI", "topAudioBadge.text=$text source=$source selectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} lastSelectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} tracks=${viewModel.getVlcAudioTracksForUi().map { "${it.id}:${it.label}" }}")
+        android.util.Log.i("DDDPlayer/UI", "topAudioBadge.text=$text full=$res source=$source selectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} lastSelectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} tracks=${viewModel.getVlcAudioTracksForUi().map { "${it.id}:${it.label}" }}")
     }
 
     private fun showPlaylist() {
@@ -1319,6 +1348,8 @@ class PlayerFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        viewModel.stopTorrentPiecesPolling()
+
         // Сначала отвязываем поверхность от плеера
         viewModel.player?.setVideoSurface(null)
         ui.standardSurfaceView.holder.removeCallback(surfaceHolderCallback)
