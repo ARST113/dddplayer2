@@ -164,21 +164,44 @@ object TrackLogic {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return trimmed
 
-        val techInfo = Regex("""\[(.+?)]""")
-            .find(trimmed)
+        val languageWords = setOf("russian", "rus", "japanese", "jpn", "english", "eng")
+        val bracketValues = Regex("""\[(.+?)]""")
+            .findAll(trimmed)
+            .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotEmpty) }
+            .toList()
+        val techInfo = bracketValues.lastOrNull { value ->
+            val lower = value.lowercase()
+            lower !in languageWords &&
+                Regex("""(?i)\b(aac|ac3|e-ac3|flac|opus|dts|truehd|mp3|pcm|vorbis)\b|\d+(?:\.\d+)?(?:ch)?""")
+                    .containsMatchIn(value)
+        } ?: bracketValues.lastOrNull { it.lowercase() !in languageWords }
+        val beforeTech = if (techInfo != null) {
+            trimmed.substringBeforeLast("[$techInfo]").trim()
+        } else {
+            trimmed.substringBefore(" [").trim()
+        }
+        val languageFromBracket = Regex("""(?i)\[(russian|rus|japanese|jpn|english|eng)]""")
+            .find(beforeTech)
             ?.groupValues
             ?.getOrNull(1)
             ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-        val beforeTech = trimmed.substringBefore(" [").trim()
         val withoutLangCode = beforeTech
             .replace(Regex("""\s+\([a-z]{2,3}\)$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""(?i)\s*-\s*\[(russian|rus|japanese|jpn|english|eng)]"""), "")
+            .replace(Regex("""(?i)\s+\[(russian|rus|japanese|jpn|english|eng)]"""), "")
             .trim()
         val beforeDetails = withoutLangCode.substringBefore(" (").trim()
         val withoutLanguageWord = beforeDetails
             .replace(Regex("""(?i)\s+(russian|rus|japanese|jpn|english|eng)$"""), "")
             .trim()
-        val title = withoutLanguageWord
+        val title = if (
+            withoutLanguageWord.matches(Regex("""(?i)track\s+\d+""")) &&
+            !languageFromBracket.isNullOrBlank()
+        ) {
+            languageFromBracket
+        } else {
+            withoutLanguageWord
+        }
             .takeIf { it.isNotEmpty() }
             ?: beforeDetails.takeIf { it.isNotEmpty() }
             ?: withoutLangCode.takeIf { it.isNotEmpty() }

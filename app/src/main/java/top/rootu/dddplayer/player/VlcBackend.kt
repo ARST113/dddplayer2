@@ -142,7 +142,37 @@ class VlcBackend(
 
     private fun readRawVlcAudioTracks(): List<BackendAudioTrack> {
         val list = mediaPlayer?.audioTracks ?: return emptyList()
-        return list.filter { it.id >= 0 }.map { BackendAudioTrack(it.id, it.name ?: "Track ${it.id}") }
+        val mediaAudioTracks = readMediaAudioTracks()
+        return list.filter { it.id >= 0 }.mapIndexed { index, track ->
+            val mediaTrack = mediaAudioTracks.getOrNull(index)
+            BackendAudioTrack(
+                id = track.id,
+                label = track.name ?: "Track ${track.id}",
+                codec = mediaTrack?.codec,
+                originalCodec = mediaTrack?.originalCodec,
+                channels = mediaTrack?.channels ?: 0,
+                sampleRate = mediaTrack?.rate ?: 0,
+                bitrate = mediaTrack?.bitrate ?: 0,
+                language = mediaTrack?.language,
+                description = mediaTrack?.description
+            )
+        }
+    }
+
+    private fun readMediaAudioTracks(): List<IMedia.AudioTrack> {
+        val media = mediaPlayer?.media ?: return emptyList()
+        val tracks = mutableListOf<IMedia.AudioTrack>()
+        for (i in 0 until media.trackCount) {
+            val track = media.getTrack(i)
+            if (track.type == IMedia.Track.Type.Audio && track is IMedia.AudioTrack) {
+                tracks += track
+            }
+        }
+        android.util.Log.i(
+            "DDDPlayer/VLC",
+            "mediaAudioTracks=${tracks.mapIndexed { idx, track -> "$idx:${track.id}:${track.description}:${track.codec}:${track.originalCodec}:channels=${track.channels}:rate=${track.rate}:bitrate=${track.bitrate}:lang=${track.language}" }}"
+        )
+        return tracks
     }
 
     private fun readRawSelectedAudioTrackId(): Int? {

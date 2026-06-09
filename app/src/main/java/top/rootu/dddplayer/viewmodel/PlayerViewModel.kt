@@ -12,6 +12,7 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -271,6 +272,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Internal
     private var audioOptions = listOf<TrackOption>()
+    private var lastKnownMedia3AudioOptions = listOf<TrackOption>()
     private var subtitleOptions = listOf<TrackOption>()
     private var currentAudioIndex = 0
     private var currentSubtitleIndex = 0
@@ -1114,6 +1116,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // 1. Аудио
         val (audio, audioIdx) = TrackLogic.extractAudioTracks(tracks, metadata)
         audioOptions = audio
+        if (audio.any { !it.isOff && it.format != null }) {
+            lastKnownMedia3AudioOptions = audio
+            Log.i(
+                "DDDPlayer/VLC",
+                "cached Media3 audio options for VLC labels: ${audio.filterNot { it.isOff }.map { "${it.index}:${it.nameFromMeta ?: it.format?.label}:${it.format?.sampleMimeType}:${it.format?.channelCount}" }}"
+            )
+        }
         // Пытаемся применить отложенную аудиодорожку
         var finalAudioIdx = audioIdx
         var restoreReason: String? = null
@@ -1295,28 +1304,87 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildVlcAudioTrackOption(track: BackendAudioTrack, ordinal: Int): TrackOption {
-        val media3Options = audioOptions.filterNot { it.isOff }
-        val matched = media3Options.firstOrNull { it.index == track.id }
-            ?: media3Options.getOrNull(ordinal)
-            ?: media3Options.firstOrNull { option ->
-                val vlcName = normalizeTrackName(track.label)
-                val media3Name = normalizeTrackName(option.nameFromMeta ?: option.format?.label)
-                !vlcName.isNullOrBlank() &&
-                    !media3Name.isNullOrBlank() &&
-                    (media3Name.contains(vlcName) || vlcName.contains(media3Name))
-            }
+        val media3Source = audioOptions
+            .takeIf { options -> options.any { !it.isOff && it.format != null } }
+            ?: lastKnownMedia3AudioOptions
+        val media3Options = media3Source.filterNot { it.isOff }
+        val vlcName = normalizeTrackName(track.label)
+        val matchedByOrdinal = media3Options.getOrNull(ordinal)
+        val matchedByTrackOrdinal = media3Options.firstOrNull { option -> option.index == track.id }
+        val matchedByContainerId = media3Options.firstOrNull { option ->
+            option.format?.id?.toIntOrNull() == track.id
+        }
+        val matchedByName = media3Options.firstOrNull { option ->
+            val media3Name = normalizeTrackName(option.nameFromMeta ?: option.format?.label)
+            !vlcName.isNullOrBlank() &&
+                !media3Name.isNullOrBlank() &&
+                (media3Name.contains(vlcName) || vlcName.contains(media3Name))
+        }
+        val matched = matchedByOrdinal ?: matchedByTrackOrdinal ?: matchedByContainerId ?: matchedByName
+        val matchReason = when {
+            matchedByOrdinal != null -> "ordinal"
+            matchedByTrackOrdinal != null -> "track_ordinal"
+            matchedByContainerId != null -> "container_id"
+            matchedByName != null -> "name"
+            else -> "none"
+        }
+        val vlcFormat = buildVlcAudioFormat(track)
 
-        return matched?.copy(
+        val option = matched?.copy(
             nameFromMeta = track.label,
             index = track.id,
             trackIndex = track.id
         ) ?: TrackOption(
-            format = null,
+            format = vlcFormat,
             nameFromMeta = track.label,
             index = track.id,
             group = null,
             trackIndex = track.id
         )
+
+        Log.i(
+            "DDDPlayer/VLC",
+            "audio_label_match vlcId=${track.id} ordinal=$ordinal vlcLabel=${track.label} match=$matchReason " +
+                "media3Count=${media3Options.size} media3Label=${matched?.nameFromMeta ?: matched?.format?.label} " +
+                "mime=${option.format?.sampleMimeType} channels=${option.format?.channelCount} " +
+                "vlcCodec=${track.codec} vlcOriginalCodec=${track.originalCodec} vlcChannels=${track.channels}"
+        )
+
+        return option
+    }
+
+    private fun buildVlcAudioFormat(track: BackendAudioTrack): Format? {
+        val mimeType = vlcAudioMimeType(track.codec, track.originalCodec) ?: return null
+        val builder = Format.Builder()
+            .setId(track.id.toString())
+            .setLabel(track.label)
+            .setSampleMimeType(mimeType)
+        track.language?.takeIf { it.isNotBlank() && it != "und" }?.let { builder.setLanguage(it) }
+        if (track.channels > 0) builder.setChannelCount(track.channels)
+        if (track.sampleRate > 0) builder.setSampleRate(track.sampleRate)
+        if (track.bitrate > 0) builder.setAverageBitrate(track.bitrate)
+        return builder.build()
+    }
+
+    private fun vlcAudioMimeType(codec: String?, originalCodec: String?): String? {
+        val normalized = listOfNotNull(codec, originalCodec)
+            .joinToString(" ")
+            .trim()
+            .lowercase()
+
+        return when {
+            normalized.isBlank() -> null
+            "mp4a" in normalized || "aac" in normalized -> MimeTypes.AUDIO_AAC
+            "eac3" in normalized || "e-ac-3" in normalized -> MimeTypes.AUDIO_E_AC3
+            "a52" in normalized || "ac-3" in normalized || "ac3" in normalized -> MimeTypes.AUDIO_AC3
+            "flac" in normalized -> MimeTypes.AUDIO_FLAC
+            "opus" in normalized -> MimeTypes.AUDIO_OPUS
+            "vorb" in normalized -> MimeTypes.AUDIO_VORBIS
+            "mpga" in normalized || "mp3" in normalized -> MimeTypes.AUDIO_MPEG
+            "truehd" in normalized || "mlp" in normalized -> MimeTypes.AUDIO_TRUEHD
+            "dts" in normalized -> MimeTypes.AUDIO_DTS
+            else -> null
+        }
     }
 
     private fun buildVlcSubtitleTrackOption(track: BackendSubtitleTrack, ordinal: Int): TrackOption {
@@ -1396,6 +1464,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadPlaylist(items: List<MediaItem>, startIndex: Int, startPosMs: Long? = null) {
+        lastKnownMedia3AudioOptions = emptyList()
         _currentPlaylist.value = items
         val startPos = startPosMs ?: items.getOrNull(startIndex)?.startPositionMs ?: 0L
         playerManager.loadPlaylist(items, startIndex, startPos)
