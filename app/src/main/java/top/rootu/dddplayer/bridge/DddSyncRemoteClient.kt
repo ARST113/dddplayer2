@@ -155,8 +155,26 @@ class DddSyncRemoteClient(
                 }
 
                 is BridgeEvent.TrackSelectionChanged -> {
-                    if (event.trackType == "audio") addProperty("selectedAudioTrack", event.label ?: event.trackId)
-                    if (event.trackType == "subtitle") addProperty("selectedSubtitleTrack", event.label ?: event.trackId)
+                    if (event.trackType == "audio") {
+                        addProperty("selectedAudioTrack", event.label ?: event.trackId)
+                        addProperty("selectedAudioTrackId", event.trackId)
+                        addProperty("selectedAudioTrackIndex", event.trackIndex)
+                        addProperty("selectedAudioTrackLanguage", event.language)
+                        addProperty("selectedAudioTrackMimeType", event.sampleMimeType)
+                        addInt("selectedAudioTrackChannels", event.channelCount)
+                    }
+
+                    if (event.trackType == "subtitle") {
+                        addProperty("selectedSubtitleTrack", event.label ?: event.trackId)
+                        addProperty("selectedSubtitleTrackId", event.trackId)
+                        addProperty("selectedSubtitleTrackIndex", event.trackIndex)
+                        addProperty("selectedSubtitleTrackLanguage", event.language)
+                        addProperty("selectedSubtitleTrackMimeType", event.sampleMimeType)
+                    }
+
+                    addProperty("trackType", event.trackType)
+                    addInt("trackIndex", event.trackIndex)
+                    addProperty("trackId", event.trackId)
                     addProperty("reason", event.reason)
                 }
 

@@ -75,7 +75,13 @@ jobs:
           fi
           VERSION_NAME="${TAG#v}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
-          VERSION_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
+          SEMVER_CODE=$((MAJOR * 1000000 + MINOR * 1000 + PATCH))
+          GIT_CODE="$(git rev-list --count HEAD)"
+          if [[ "$SEMVER_CODE" -gt "$GIT_CODE" ]]; then
+            VERSION_CODE="$SEMVER_CODE"
+          else
+            VERSION_CODE="$GIT_CODE"
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"

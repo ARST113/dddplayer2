@@ -763,6 +763,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
                 if (playerManager.getActiveBackendId() == "VLC") {
                     refreshCurrentAudioTrackUiState()
+                    restoreVlcAudioPreferenceIfNeeded("backend_playing")
                     refreshCurrentSubtitleTrackUiState()
                 }
                 val d = playerManager.getDurationMs().takeIf { it > 0 } ?: 0L
@@ -1242,10 +1243,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (hadPendingAudioId && restoreReason == null) {
             Log.d(TAG, "Pending audio id not found id=$requestedPendingAudioId uri=$currentUri")
         }
-        if (restoreReason != null && finalAudioIdx in audioOptions.indices && finalAudioIdx != audioIdx) {
-            selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
-        } else if (restoreReason == "restore_exact_uri" && finalAudioIdx in audioOptions.indices && finalAudioIdx == audioIdx) {
-            emitTrackSelectionChanged(audioOptions[finalAudioIdx], finalAudioIdx, "audio", "restore_exact_uri", restoreScore)
+        if (restoreReason != null && finalAudioIdx in audioOptions.indices) {
+            if (finalAudioIdx != audioIdx) {
+                selectTrackByIndex(C.TRACK_TYPE_AUDIO, finalAudioIdx, persist = false, reason = restoreReason!!, matchScore = restoreScore)
+            } else {
+                emitTrackSelectionChanged(audioOptions[finalAudioIdx], finalAudioIdx, "audio", restoreReason!!, restoreScore)
+            }
         }
         currentAudioIndex = finalAudioIdx
         _currentAudioTrack.value = audioOptions.getOrNull(currentAudioIndex)
@@ -1406,12 +1409,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         val option = matched?.copy(
             nameFromMeta = track.label,
-            index = track.id,
+            index = ordinal,
             trackIndex = track.id
         ) ?: TrackOption(
             format = vlcFormat,
             nameFromMeta = track.label,
-            index = track.id,
+            index = ordinal,
             group = null,
             trackIndex = track.id
         )
@@ -1540,7 +1543,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun loadPlaylist(items: List<MediaItem>, startIndex: Int, startPosMs: Long? = null) {
         lastKnownMedia3AudioOptions = emptyList()
         _currentPlaylist.value = items
+        sessionAudioPreference = null
+        hasExplicitSessionAudioPreference = false
+        pendingAudioId = null
         val startPos = startPosMs ?: items.getOrNull(startIndex)?.startPositionMs ?: 0L
+        applyLaunchAudioPreference(items.getOrNull(startIndex)?.dddSyncContext)
         playerManager.loadPlaylist(items, startIndex, startPos)
         startTorrentPiecesPolling(items.getOrNull(startIndex)?.uri?.toString())
         sendDddSyncSessionStarted(items.getOrNull(startIndex), items.size, startIndex, startPos)
@@ -1553,16 +1560,55 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updateAvailableSettings()
     }
 
+    private fun applyLaunchAudioPreference(context: DddSyncContext?) {
+        val label = context?.lampaAudioTrack?.takeIf { it.isNotBlank() }
+        val trackId = context?.lampaAudioTrackId?.takeIf { it.isNotBlank() }
+        val language = context?.lampaAudioTrackLanguage?.takeIf { it.isNotBlank() }
+        val mimeType = context?.lampaAudioTrackMimeType?.takeIf { it.isNotBlank() }
+        val channelCount = context?.lampaAudioTrackChannelCount?.takeIf { it > 0 }
+        val ordinal = context?.lampaAudioTrackIndex ?: -1
+
+        if (label == null && trackId == null && language == null && mimeType == null && channelCount == null) {
+            return
+        }
+
+        sessionAudioPreference = TrackFingerprint(
+            trackType = C.TRACK_TYPE_AUDIO,
+            formatId = trackId,
+            language = language,
+            label = label,
+            normalizedName = normalizeTrackName(label),
+            sampleMimeType = mimeType,
+            channelCount = channelCount,
+            bitrate = null,
+            ordinal = ordinal,
+            trackCount = null,
+            nameFromMeta = label
+        )
+        hasExplicitSessionAudioPreference = true
+        pendingAudioId = trackId
+
+        Log.i(
+            TAG,
+            "DDD launch audio preference label=$label id=$trackId index=$ordinal lang=$language mime=$mimeType channels=$channelCount"
+        )
+    }
+
     fun saveCurrentSettings() {
-        val p = player ?: return
-        val playerUri = p.currentMediaItem?.localConfiguration?.uri?.toString()
-        val uri = playerUri ?: currentUri ?: return
+        val p = player
+        val playerUri = p?.currentMediaItem?.localConfiguration?.uri?.toString()
+        val backendUri = playerManager.getCurrentUri()
+        val uri = playerUri ?: backendUri ?: currentUri ?: return
         if (currentUri != null && playerUri != null && currentUri != playerUri) {
             Log.d(TAG, "saveCurrentSettings uri mismatch currentUri=$currentUri playerUri=$playerUri; using playerUri")
         }
         currentUri = uri
 
-        val positionToSave = if (p.isCurrentMediaItemLive) 0L else p.currentPosition
+        val positionToSave = if (p?.isCurrentMediaItemLive == true) {
+            0L
+        } else {
+            playerManager.getPositionMs().coerceAtLeast(0L)
+        }
         // Получаем ID текущих дорожек
         val audioId = _currentAudioTrack.value?.format?.id
         val subId = if (_currentSubtitleTrack.value?.isOff == true) "disabled"
@@ -1572,7 +1618,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             uri = uri,
             lastUpdated = System.currentTimeMillis(),
             lastPosition = positionToSave,
-            duration = p.duration.coerceAtLeast(0L),
+            duration = normalizeDuration(playerManager.getDurationMs())?.coerceAtLeast(0L) ?: 0L,
             audioTrackId = audioId,
             subtitleTrackId = subId
         )
@@ -1800,6 +1846,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         android.util.Log.w("DDDPlayer/VLC", "audio_select failed: requested=$index tracks=$list")
                         return
                     }
+                val resolvedIndex = list.indexOfFirst { it.id == pair.id }.coerceAtLeast(0)
                 val ok = playerManager.selectVlcAudioTrackById(pair.id)
                 val selectedAfter = playerManager.getVlcSelectedAudioTrackId()
                 refreshCurrentAudioTrackUiState()
@@ -1808,6 +1855,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     "audio_select requested=$index targetId=${pair.id} targetLabel=${pair.label} ok=$ok selectedAfter=$selectedAfter displayedAudioLabel=${playerManager.getCurrentAudioTrackLabel()}"
                 )
                 _toastMessage.postValue("VLC audio: ${pair.label}")
+                if (ok || selectedAfter == pair.id) {
+                    val option = buildVlcAudioTrackOption(pair, resolvedIndex)
+                    _currentAudioTrack.value = option
+                    if (persist) {
+                        saveCurrentSettings()
+                        sessionAudioPreference = option.toFingerprint(C.TRACK_TYPE_AUDIO)
+                        hasExplicitSessionAudioPreference = true
+                        Log.d(
+                            TAG,
+                            "Session VLC audio preference set index=$resolvedIndex id=${pair.id} normalized=${sessionAudioPreference?.normalizedName} label=${pair.label}"
+                        )
+                    }
+                    emitTrackSelectionChanged(option, resolvedIndex, "audio", reason, matchScore)
+                }
             } else {
                 val list = playerManager.getVlcSubtitleTracks()
                 val selectedBefore = playerManager.getVlcSelectedSubtitleTrackId()
@@ -2037,24 +2098,62 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         repository.setShowAudioRestoreDebugEnabled(showAudioRestoreDebugToast)
     }
 
-    private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
-        if (!bridgeConfig.enabled) return
-        bridgeDispatcher?.emit(
-            BridgeEvent.TrackSelectionChanged(
-                sessionId = bridgeConfig.sessionId,
-                ts = System.currentTimeMillis(),
-                uri = player?.currentMediaItem?.localConfiguration?.uri?.toString(),
-                trackType = trackType,
-                trackIndex = index,
-                trackId = option.format?.id,
-                language = option.format?.language,
-                label = option.nameFromMeta ?: option.format?.label,
-                sampleMimeType = option.format?.sampleMimeType,
-                channelCount = option.format?.channelCount,
-                reason = reason,
-                matchScore = matchScore
-            )
+    private fun restoreVlcAudioPreferenceIfNeeded(reason: String) {
+        if (playerManager.getActiveBackendId() != "VLC") return
+        if (!hasExplicitSessionAudioPreference) return
+        val preference = sessionAudioPreference ?: return
+        val tracks = playerManager.getVlcAudioTracks()
+        if (tracks.isEmpty()) return
+
+        val options = tracks.mapIndexed { index, track -> buildVlcAudioTrackOption(track, index) }
+        val match = matchTrackByPreference(options, preference, trackRestoreMode, explicitNamePriority = true)
+            ?: return
+        val targetTrack = tracks.getOrNull(match.index) ?: return
+        val selectedBefore = playerManager.getVlcSelectedAudioTrackId()
+
+        if (selectedBefore == targetTrack.id) {
+            _currentAudioTrack.value = options.getOrNull(match.index)
+            return
+        }
+
+        val ok = playerManager.selectVlcAudioTrackById(targetTrack.id)
+        val selectedAfter = playerManager.getVlcSelectedAudioTrackId()
+        refreshCurrentAudioTrackUiState()
+
+        Log.i(
+            "DDDPlayer/VLC",
+            "audio_restore reason=$reason targetIndex=${match.index} targetId=${targetTrack.id} targetLabel=${targetTrack.label} ok=$ok selectedBefore=$selectedBefore selectedAfter=$selectedAfter score=${match.score} matchReason=${match.reason}"
         )
+
+        if (ok || selectedAfter == targetTrack.id) {
+            val option = options[match.index]
+            _currentAudioTrack.value = option
+            saveCurrentSettings()
+            emitTrackSelectionChanged(option, match.index, "audio", "restore_${match.reason}", match.score)
+        }
+    }
+
+    private fun emitTrackSelectionChanged(option: TrackOption, index: Int, trackType: String, reason: String, matchScore: Int?) {
+        val event = BridgeEvent.TrackSelectionChanged(
+            sessionId = bridgeConfig.sessionId ?: getCurrentDddSyncContext()?.sessionId,
+            ts = System.currentTimeMillis(),
+            uri = playerManager.getCurrentUri(),
+            trackType = trackType,
+            trackIndex = index,
+            trackId = option.format?.id,
+            language = option.format?.language,
+            label = option.nameFromMeta ?: option.format?.label,
+            sampleMimeType = option.format?.sampleMimeType,
+            channelCount = option.format?.channelCount,
+            reason = reason,
+            matchScore = matchScore
+        )
+
+        if (bridgeConfig.enabled) {
+            bridgeDispatcher?.emit(event)
+        }
+
+        sendDddSyncEvent(event)
     }
 
     // Логика изменения настроек (вызывается из Fragment по команде SettingsViewModel)
@@ -2069,11 +2168,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         val currentIndex = tracks.indexOfFirst { it.id == selectedBefore }.takeIf { it >= 0 } ?: 0
                         val targetIndex = (currentIndex + direction + tracks.size) % tracks.size
                         val target = tracks[targetIndex]
-                        val ok = playerManager.selectVlcAudioTrackById(target.id)
-                        val selectedAfter = playerManager.getVlcSelectedAudioTrackId()
-                        refreshCurrentAudioTrackUiState()
-                        android.util.Log.i("DDDPlayer/VLC", "audio_cycle targetIndex=$targetIndex targetId=${target.id} selectResult=$ok selectedAfter=$selectedAfter displayedAudioLabel=${playerManager.getCurrentAudioTrackLabel()}")
-                        _toastMessage.postValue("VLC audio: ${target.label}")
+                        selectTrackByIndex(C.TRACK_TYPE_AUDIO, target.id)
                     }
                 } else {
                     val options = audioOptions

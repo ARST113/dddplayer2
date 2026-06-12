@@ -244,7 +244,13 @@ object IntentUtils {
             filename = params["ddd_filename"] ?: filename,
             lampaPositionMs = params["ddd_lampa_position"]?.toLongOrNull(),
             lampaDurationMs = params["ddd_lampa_duration"]?.toLongOrNull(),
-            lampaPercent = params["ddd_lampa_percent"]?.toIntOrNull()
+            lampaPercent = params["ddd_lampa_percent"]?.toIntOrNull(),
+            lampaAudioTrack = params["ddd_audio_track"],
+            lampaAudioTrackId = params["ddd_audio_track_id"],
+            lampaAudioTrackIndex = params["ddd_audio_track_index"]?.toIntOrNull(),
+            lampaAudioTrackLanguage = params["ddd_audio_track_language"],
+            lampaAudioTrackMimeType = params["ddd_audio_track_mime"],
+            lampaAudioTrackChannelCount = params["ddd_audio_track_channels"]?.toIntOrNull()
         ).takeIf { it.enabled }
     }
 

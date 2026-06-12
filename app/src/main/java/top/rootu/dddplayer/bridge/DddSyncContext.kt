@@ -15,7 +15,13 @@ data class DddSyncContext(
     val filename: String? = null,
     val lampaPositionMs: Long? = null,
     val lampaDurationMs: Long? = null,
-    val lampaPercent: Int? = null
+    val lampaPercent: Int? = null,
+    val lampaAudioTrack: String? = null,
+    val lampaAudioTrackId: String? = null,
+    val lampaAudioTrackIndex: Int? = null,
+    val lampaAudioTrackLanguage: String? = null,
+    val lampaAudioTrackMimeType: String? = null,
+    val lampaAudioTrackChannelCount: Int? = null
 ) {
     val enabled: Boolean
         get() = remoteEventsUrl.isNotBlank() && deviceId.isNotBlank()
