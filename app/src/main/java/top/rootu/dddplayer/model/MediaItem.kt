@@ -1,6 +1,7 @@
 package top.rootu.dddplayer.model
 
 import android.net.Uri
+import top.rootu.dddplayer.bridge.DddSyncContext
 import java.util.UUID
 
 data class MediaItem(
@@ -11,6 +12,7 @@ data class MediaItem(
     val headers: Map<String, String> = emptyMap(),
     val subtitles: List<SubtitleItem> = emptyList(),
     val startPositionMs: Long = 0,
+    val dddSyncContext: DddSyncContext? = null,
     // Уникальный ID для DiffUtil, генерируется автоматически при создании объекта
     val uuid: String = UUID.randomUUID().toString()
 )

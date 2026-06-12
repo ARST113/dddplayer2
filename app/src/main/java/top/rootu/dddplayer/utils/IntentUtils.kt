@@ -11,6 +11,7 @@ import android.provider.OpenableColumns
 import androidx.core.net.toUri
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeMode
+import top.rootu.dddplayer.bridge.DddSyncContext
 import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.SubtitleItem
 
@@ -102,7 +103,8 @@ object IntentUtils {
     }
 
     private fun parseSingleFile(context: Context, intent: Intent): Pair<List<MediaItem>, Int> {
-        val uri = intent.data?.buildUpon()?.fragment(null)?.build() ?: return Pair(emptyList(), 0)
+        val rawUri = intent.data ?: return Pair(emptyList(), 0)
+        val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: return Pair(emptyList(), 0)
         val extras = intent.extras ?: Bundle.EMPTY
 
         // Пытаемся найти заголовок в Extras (некоторые приложения передают его)
@@ -115,7 +117,11 @@ object IntentUtils {
             title = filename ?: uri.lastPathSegment ?: "Video"
         }
 
+        val syncContext = parseDddSyncContext(rawUri, title, filename)
         val startPosition = getLongExtraCompat(extras, "position", 0L)
+            .takeIf { it > 0L }
+            ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
+            ?: 0L
         // Single poster
         val singlePoster = extras.getString("thumbnail")
         // Single Video Subtitles
@@ -128,7 +134,8 @@ object IntentUtils {
             posterUri = singlePoster?.toUri(),
             headers = parseHeaders(extras),
             subtitles = singleSubs,
-            startPositionMs = startPosition
+            startPositionMs = startPosition,
+            dddSyncContext = syncContext
         )
 
         return Pair(listOf(item), 0)
@@ -152,11 +159,13 @@ object IntentUtils {
         var matchedStartIndex: Int? = null
 
         for (i in videoListUris.indices) {
-            val uri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri())?.buildUpon()?.fragment(null)?.build() ?: continue
+            val rawUri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri()) ?: continue
+            val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: continue
 
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
             if (title.isNullOrEmpty()) title = uri.lastPathSegment
+            val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i))
 
             val itemSubs = if (playlistSubsBundles != null && i < playlistSubsBundles.size) {
                 parseSubtitles(playlistSubsBundles[i], "uris", "names")
@@ -166,7 +175,14 @@ object IntentUtils {
 
             val isCurrent = samePlaybackItem(uri, cleanDataUri)
             if (isCurrent) matchedStartIndex = playlist.size
-            val pos = if (isCurrent) getLongExtraCompat(extras, "position", 0L) else 0L
+            val pos = if (isCurrent) {
+                getLongExtraCompat(extras, "position", 0L)
+                    .takeIf { it > 0L }
+                    ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
+                    ?: 0L
+            } else {
+                0L
+            }
 
             playlist.add(
                 MediaItem(
@@ -176,7 +192,8 @@ object IntentUtils {
                     posterUri = posters?.getOrNull(i)?.takeIf { it.isNotEmpty() }?.toUri(),
                     headers = headersMap,
                     subtitles = itemSubs,
-                    startPositionMs = pos
+                    startPositionMs = pos,
+                    dddSyncContext = syncContext
                 )
             )
         }
@@ -204,6 +221,31 @@ object IntentUtils {
             }
             ?.toMap()
             .orEmpty()
+    }
+
+    private fun parseDddSyncContext(uri: Uri?, title: String?, filename: String?): DddSyncContext? {
+        val params = parseFragmentParams(uri?.fragment)
+        val remoteEventsUrl = params["ddd_remote_events_url"] ?: return null
+        val deviceId = params["ddd_device_id"] ?: return null
+        val cleanUri = uri?.buildUpon()?.fragment(null)?.build()?.toString()
+
+        return DddSyncContext(
+            remoteEventsUrl = remoteEventsUrl,
+            remoteLatestUrl = params["ddd_remote_latest_url"],
+            schema = params["ddd_remote_schema"]?.toIntOrNull() ?: 1,
+            deviceId = deviceId,
+            sessionId = params["ddd_sid"] ?: params["bridge_session_id"],
+            contentKey = params["ddd_content_key"],
+            sourceKey = params["ddd_source_key"],
+            timelineHash = params["ddd_timeline_hash"],
+            sourceKind = params["ddd_source_kind"],
+            uri = cleanUri,
+            title = params["ddd_title"] ?: title,
+            filename = params["ddd_filename"] ?: filename,
+            lampaPositionMs = params["ddd_lampa_position"]?.toLongOrNull(),
+            lampaDurationMs = params["ddd_lampa_duration"]?.toLongOrNull(),
+            lampaPercent = params["ddd_lampa_percent"]?.toIntOrNull()
+        ).takeIf { it.enabled }
     }
 
 

@@ -35,6 +35,8 @@ import top.rootu.dddplayer.R
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeDispatcher
 import top.rootu.dddplayer.bridge.BridgeEvent
+import top.rootu.dddplayer.bridge.DddSyncContext
+import top.rootu.dddplayer.bridge.DddSyncRemoteClient
 import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.data.VideoSettings
 import top.rootu.dddplayer.data.torrserver.TorrServerCacheClient
@@ -156,6 +158,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var bridgeConfig: BridgeConfig = BridgeConfig()
     private var bridgeDispatcher: BridgeDispatcher? = null
     private var lastBridgeTickAt = 0L
+    private var lastDddSyncTickAt = 0L
 
     @Volatile
     private var lastKnownSnapshot: PlaybackSnapshot? = null
@@ -295,6 +298,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .readTimeout(2, TimeUnit.SECONDS)
             .build()
     )
+    private val dddSyncClient = DddSyncRemoteClient(
+        OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .build()
+    )
     private var torrentPiecesJob: Job? = null
     private var torrentStreamContext: TorrServerStreamContext? = null
 
@@ -351,22 +361,37 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             val now = System.currentTimeMillis()
             if (bridgeConfig.enabled && bridgeConfig.emitPosition && now - lastBridgeTickAt >= bridgeConfig.positionIntervalMs) {
-                bridgeDispatcher?.emit(
-                    BridgeEvent.PositionTick(
-                        sessionId = bridgeConfig.sessionId,
-                        ts = now,
-                        uri = playerManager.getCurrentUri(),
-                        position = playerManager.getPositionMs(),
-                        duration = normalizeDuration(playerManager.getDurationMs()),
-                        bufferedPosition = playerManager.getBufferedPositionMs(),
-                        bufferedPercentage = _bufferedPercentage.value,
-                        windowIndex = playerManager.getCurrentWindowIndex(),
-                        title = playerManager.getCurrentTitle(),
-                        reason = "tick"
-                    )
+                val event = BridgeEvent.PositionTick(
+                    sessionId = bridgeConfig.sessionId,
+                    ts = now,
+                    uri = playerManager.getCurrentUri(),
+                    position = playerManager.getPositionMs(),
+                    duration = normalizeDuration(playerManager.getDurationMs()),
+                    bufferedPosition = playerManager.getBufferedPositionMs(),
+                    bufferedPercentage = _bufferedPercentage.value,
+                    windowIndex = playerManager.getCurrentWindowIndex(),
+                    title = playerManager.getCurrentTitle(),
+                    reason = "tick"
                 )
+                bridgeDispatcher?.emit(event)
                 lastBridgeTickAt = now
                 previousSnapshotForTransition = updateLastKnownSnapshot("tick")
+            }
+            if (now - lastDddSyncTickAt >= bridgeConfig.positionIntervalMs) {
+                val event = BridgeEvent.PositionTick(
+                    sessionId = bridgeConfig.sessionId,
+                    ts = now,
+                    uri = playerManager.getCurrentUri(),
+                    position = playerManager.getPositionMs(),
+                    duration = normalizeDuration(playerManager.getDurationMs()),
+                    bufferedPosition = playerManager.getBufferedPositionMs(),
+                    bufferedPercentage = _bufferedPercentage.value,
+                    windowIndex = playerManager.getCurrentWindowIndex(),
+                    title = playerManager.getCurrentTitle(),
+                    reason = "tick"
+                )
+                sendDddSyncEvent(event)
+                lastDddSyncTickAt = now
             }
             handler.postDelayed(this, 200)
         }
@@ -478,6 +503,47 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         sessionId, System.currentTimeMillis(), uri, error.errorCodeName, error.errorCode, error.message, windowIndex, position, duration, bufferedPosition, bufferedPercentage, playlistSize, title, true
     )
 
+    private fun getCurrentDddSyncContext(windowIndex: Int? = null): DddSyncContext? {
+        val index = windowIndex ?: playerManager.getCurrentWindowIndex()
+        return _currentPlaylist.value?.getOrNull(index)?.dddSyncContext
+    }
+
+    private fun sendDddSyncEvent(event: BridgeEvent, context: DddSyncContext? = null) {
+        val target = context ?: getCurrentDddSyncContext(eventWindowIndex(event)) ?: return
+        dddSyncClient.send(event, target)
+        Log.d("DDDPlayer/DddSync", "queued type=${event::class.simpleName} contentKey=${target.contentKey} sourceKey=${target.sourceKey}")
+    }
+
+    private fun eventWindowIndex(event: BridgeEvent): Int? = when (event) {
+        is BridgeEvent.SessionStarted -> event.startIndex
+        is BridgeEvent.PositionTick -> event.windowIndex
+        is BridgeEvent.PlaybackStateChanged -> event.windowIndex
+        is BridgeEvent.SeekCompleted -> event.windowIndex
+        is BridgeEvent.PlaylistItemChanged -> event.windowIndex
+        is BridgeEvent.PlaybackEnded -> event.windowIndex
+        is BridgeEvent.SessionFinished -> event.windowIndex
+        is BridgeEvent.Error -> event.windowIndex
+        is BridgeEvent.UserAction -> event.windowIndex
+        is BridgeEvent.TrackSelectionChanged -> null
+    }
+
+    fun sendDddSyncSessionStarted(item: MediaItem?, playlistSize: Int, startIndex: Int, startPosition: Long?) {
+        val context = item?.dddSyncContext ?: return
+        sendDddSyncEvent(
+            BridgeEvent.SessionStarted(
+                sessionId = bridgeConfig.sessionId ?: context.sessionId,
+                ts = System.currentTimeMillis(),
+                uri = item.uri.toString(),
+                title = item.title,
+                playlistSize = playlistSize,
+                startIndex = startIndex,
+                startPosition = startPosition?.takeIf { it > 0L },
+                currentItem = null
+            ),
+            context
+        )
+    }
+
     private fun shouldThrottleEventFlush(snapshot: PlaybackSnapshot, reason: String, force: Boolean): Boolean {
         if (force) return false
         val hardReasons = setOf("pause","resume","seek","seek_forward","seek_backward","manual_next","manual_previous","playlist_item_changed","ended","background","destroy","user_exit","error")
@@ -499,11 +565,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lastEventFlushUri = snapshot.uri
         previousSnapshotForTransition = snapshot
         if (saveSettings) saveCurrentSettings()
-        if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(snapshot.toPositionTick(reason))
-        if (final && bridgeConfig.enabled && finalSessionFinishedSent.compareAndSet(false, true)) {
-            bridgeDispatcher?.emit(snapshot.toSessionFinished(reason))
+        val positionEvent = snapshot.toPositionTick(reason)
+        if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(positionEvent)
+        sendDddSyncEvent(positionEvent)
+        if (final && finalSessionFinishedSent.compareAndSet(false, true)) {
+            val finishedEvent = snapshot.toSessionFinished(reason)
+            if (bridgeConfig.enabled) bridgeDispatcher?.emit(finishedEvent)
+            sendDddSyncEvent(finishedEvent)
         }
-        if (includeError != null && bridgeConfig.enabled) bridgeDispatcher?.emit(snapshot.toError(includeError))
+        if (includeError != null) {
+            val errorEvent = snapshot.toError(includeError)
+            if (bridgeConfig.enabled) bridgeDispatcher?.emit(errorEvent)
+            sendDddSyncEvent(errorEvent)
+        }
     }
 
     private val playerListener = object : Player.Listener {
@@ -1469,6 +1543,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val startPos = startPosMs ?: items.getOrNull(startIndex)?.startPositionMs ?: 0L
         playerManager.loadPlaylist(items, startIndex, startPos)
         startTorrentPiecesPolling(items.getOrNull(startIndex)?.uri?.toString())
+        sendDddSyncSessionStarted(items.getOrNull(startIndex), items.size, startIndex, startPos)
         viewModelScope.launch { repository.cleanupOldSettings() }
     }
 
