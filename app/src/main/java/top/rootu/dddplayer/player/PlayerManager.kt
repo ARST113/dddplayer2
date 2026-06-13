@@ -21,6 +21,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -849,12 +850,36 @@ class PlayerManager(
     }
 
     private fun isVideoDecoderError(error: Throwable): Boolean {
+        (error as? ExoPlaybackException)?.let { exoError ->
+            val rendererName = exoError.rendererName?.lowercase().orEmpty()
+            val sampleMimeType = exoError.rendererFormat?.sampleMimeType?.lowercase().orEmpty()
+            val containerMimeType = exoError.rendererFormat?.containerMimeType?.lowercase().orEmpty()
+            val errorCodeName = exoError.errorCodeName.lowercase()
+            val causeText = exoError.cause?.stackTraceToString()?.lowercase().orEmpty()
+
+            val isVideoRenderer = exoError.type == ExoPlaybackException.TYPE_RENDERER &&
+                    (rendererName.contains("videorenderer") ||
+                            sampleMimeType.startsWith("video/") ||
+                            containerMimeType.startsWith("video/"))
+            val isDecoderFailure = errorCodeName.contains("decoder") ||
+                    errorCodeName.contains("decoding") ||
+                    causeText.contains("decoder")
+
+            if (isVideoRenderer && isDecoderFailure) {
+                return true
+            }
+        }
+
         val msg = error.stackTraceToString().lowercase()
-        return msg.contains("error_code_decoding_failed") ||
+        return (msg.contains("error_code_decoding_failed") && msg.contains("video")) ||
                 msg.contains("mediacodecvideorenderer") ||
+                msg.contains("libdav1dvideorenderer") ||
+                msg.contains("ffmpegvideorenderer") ||
+                msg.contains("video/av01") ||
+                msg.contains("dav1ddecoderexception") ||
                 msg.contains("video/hevc") ||
                 msg.contains("c2.google.hevc.decoder") ||
-                msg.contains("decoder initialization")
+                (msg.contains("decoder initialization") && msg.contains("video"))
     }
 
 }

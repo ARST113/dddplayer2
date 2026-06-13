@@ -7,7 +7,7 @@ DDD Player 2 is not a movie catalog, torrent searcher, Lampac replacement, or To
 ## Latest Release
 
 - Release page: https://github.com/ARST113/dddplayer2/releases
-- Latest APK: https://github.com/ARST113/dddplayer2/releases/download/v0.0.5/dddplayer-v0.0.5-release.apk
+- Latest APK: https://github.com/ARST113/dddplayer2/releases/download/v0.0.7/dddplayer-v0.0.7-release.apk
 - Package: `top.rootu.dddplayer`
 - Minimum Android: Android 6.0 / API 23
 
@@ -23,7 +23,7 @@ DDD Player 2 currently supports:
 - start position from `position`;
 - posters/thumbnails for playlist items;
 - Media3 / ExoPlayer as the primary backend;
-- LibVLC fallback backend for streams Media3 cannot decode, especially HEVC cases;
+- LibVLC fallback backend for streams Media3 cannot decode, especially HEVC and AV1 cases;
 - sticky VLC fallback for the current playlist session after a decoder failure;
 - VLC progress, duration, seekbar, and time labels;
 - VLC audio selection by real VLC track id;
@@ -37,16 +37,12 @@ DDD Player 2 currently supports:
 - top panel with compact video/audio/subtitle values, peer/cache stats, and TorrServer pieces dots;
 - bridge events through Android Broadcast and/or local in-memory HTTP bridge.
 
-## Recent v0.0.5 Changes
+## Recent v0.0.7 Changes
 
-Compared with `v0.0.4`, this release adds and fixes:
+Compared with `v0.0.6`, this release adds and fixes:
 
-- TorrServer cache pieces dots in the top information panel.
-- Compact top-panel labels: video as `1920x1080`, audio with codec/channels, no long technical clutter in the main badge.
-- VLC compact audio labels fixed after fallback: the top badge no longer falls back to `AniLibria Russian` or `Unknown`.
-- Japanese/secondary VLC audio tracks keep technical format labels, for example FLAC 2.0.
-- First step of VLC subtitle support.
-- README rewritten to match the current app behavior.
+- AV1/dav1d video decoder failures now trigger LibVLC fallback instead of leaving playback in audio-only mode.
+- 10-bit AV1 MKV streams such as `Trigun S01E17.mkv` can recover through VLC after Media3 reports `ERROR_CODE_DECODING_FAILED`.
 
 ## Playback Backends
 
