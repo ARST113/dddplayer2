@@ -788,6 +788,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } else 0L
             _duration.postValue(safeDuration)
         }
+        playerManager.onBackendVideoSizeChanged = { width, height, pixelWidthHeightRatio ->
+            handleVideoGeometryChanged(width, height, pixelWidthHeightRatio, "VLC")
+        }
         playerManager.onBackendEnded = {
             saveCurrentSettings()
             _playbackEnded.postValue(true)
@@ -1177,12 +1180,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun handleVideoSizeChanged(videoSize: VideoSize) {
         lastVideoSize = videoSize
-        if (videoSize.height > 0) {
-            val ratio = (videoSize.width * videoSize.pixelWidthHeightRatio) / videoSize.height
-            _videoAspectRatio.postValue(ratio)
-        }
+        handleVideoGeometryChanged(
+            videoSize.width,
+            videoSize.height,
+            videoSize.pixelWidthHeightRatio,
+            "Media3"
+        )
 
         if (videoSize.width == 0 || videoSize.height == 0) return
+    }
+
+    private fun handleVideoGeometryChanged(width: Int, height: Int, pixelWidthHeightRatio: Float, source: String) {
+        if (width <= 0 || height <= 0) return
+        val safePixelRatio = pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+        val ratio = (width * safePixelRatio) / height
+        Log.i("DDDPlayer/Video", "aspect source=$source size=${width}x$height pixelRatio=$safePixelRatio ratio=$ratio")
+        _videoAspectRatio.postValue(ratio)
     }
 
     private fun updateTracksInfo(tracks: Tracks) {

@@ -7,6 +7,7 @@ import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.interfaces.IMedia
+import org.videolan.libvlc.interfaces.IVLCVout
 import top.rootu.dddplayer.R
 import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.model.SubtitleItem
@@ -28,6 +29,18 @@ class VlcBackend(
     private var lastKnownDurationMs: Long = 0L
     private var lastSelectedAudioTrackId: Int? = null
     private var lastSelectedSubtitleTrackId: Int? = null
+    private val videoLayoutListener = IVLCVout.OnNewVideoLayoutListener { _, width, height, visibleWidth, visibleHeight, sarNum, sarDen ->
+        val frameWidth = visibleWidth.takeIf { it > 0 } ?: width
+        val frameHeight = visibleHeight.takeIf { it > 0 } ?: height
+        val pixelRatio = if (sarNum > 0 && sarDen > 0) sarNum.toFloat() / sarDen else 1f
+        android.util.Log.i(
+            "DDDPlayer/VLC",
+            "video_layout width=$width height=$height visible=${visibleWidth}x$visibleHeight sar=$sarNum/$sarDen ratio=${if (frameHeight > 0) frameWidth * pixelRatio / frameHeight else 0f}"
+        )
+        if (frameWidth > 0 && frameHeight > 0) {
+            listener?.onVideoSizeChanged(frameWidth, frameHeight, pixelRatio)
+        }
+    }
 
     override fun attachSurfaceHolder(surfaceHolder: SurfaceHolder?) {
         holder = surfaceHolder
@@ -35,7 +48,7 @@ class VlcBackend(
             detachViews()
             if (surfaceHolder != null) {
                 setVideoSurface(surfaceHolder.surface, surfaceHolder)
-                attachViews()
+                attachViews(videoLayoutListener)
             }
         }
     }
@@ -84,6 +97,14 @@ class VlcBackend(
                         android.util.Log.d("DDDPlayer/VLC", "LengthChanged=$lastKnownDurationMs")
                         listener?.onPositionChanged(getPositionMs(), getDurationMs())
                     }
+                    MediaPlayer.Event.Vout -> {
+                        android.util.Log.i("DDDPlayer/VLC", "VLC Vout count=${event.voutCount}")
+                        notifyCurrentVideoSize("vout")
+                    }
+                    MediaPlayer.Event.ESAdded,
+                    MediaPlayer.Event.ESSelected -> {
+                        notifyCurrentVideoSize("es_${event.esChangedType}_${event.esChangedID}")
+                    }
                     MediaPlayer.Event.Playing -> {
                         val toApply = when { pendingSeekApplyMs > 0 -> pendingSeekApplyMs; pendingStartPositionMs > 0 -> pendingStartPositionMs; else -> 0L }
                         if (toApply > 0) {
@@ -99,6 +120,7 @@ class VlcBackend(
                         lastKnownDurationMs = player.length
                         refreshAudioTrackState()
                         refreshSubtitleTrackState()
+                        notifyCurrentVideoSize("playing")
                         listener?.onPlaying()
                         listener?.onPositionChanged(getPositionMs(), getDurationMs())
                     }
@@ -109,7 +131,7 @@ class VlcBackend(
             }
             if (holder != null) {
                 player.vlcVout.setVideoSurface(holder!!.surface, holder)
-                player.vlcVout.attachViews()
+                player.vlcVout.attachViews(videoLayoutListener)
             }
             val media = Media(libVlc, uri)
             headers.forEach { (k, v) -> media.addOption(":http-header=$k=$v") }
@@ -139,6 +161,37 @@ class VlcBackend(
     override fun getBufferedPositionMs(): Long = getPositionMs()
     override fun getBufferedPercentage(): Int = if (isPlaying()) 100 else if (isCurrentlyBuffering) lastBufferingPercent else lastBufferingPercent
     override fun setListener(listener: PlaybackBackend.Listener?) { this.listener = listener }
+
+    private fun notifyCurrentVideoSize(reason: String) {
+        val direct = mediaPlayer?.currentVideoTrack
+        val mediaTrack = direct ?: readMediaVideoTracks().firstOrNull()
+        val width = mediaTrack?.width ?: 0
+        val height = mediaTrack?.height ?: 0
+        if (width <= 0 || height <= 0) return
+
+        val pixelRatio = if (mediaTrack != null && mediaTrack.sarNum > 0 && mediaTrack.sarDen > 0) {
+            mediaTrack.sarNum.toFloat() / mediaTrack.sarDen
+        } else {
+            1f
+        }
+        android.util.Log.i(
+            "DDDPlayer/VLC",
+            "video_track reason=$reason width=$width height=$height sar=${mediaTrack?.sarNum ?: 0}/${mediaTrack?.sarDen ?: 0} ratio=${width * pixelRatio / height}"
+        )
+        listener?.onVideoSizeChanged(width, height, pixelRatio)
+    }
+
+    private fun readMediaVideoTracks(): List<IMedia.VideoTrack> {
+        val media = mediaPlayer?.media ?: return emptyList()
+        val tracks = mutableListOf<IMedia.VideoTrack>()
+        for (i in 0 until media.trackCount) {
+            val track = media.getTrack(i)
+            if (track.type == IMedia.Track.Type.Video && track is IMedia.VideoTrack) {
+                tracks += track
+            }
+        }
+        return tracks
+    }
 
     private fun readRawVlcAudioTracks(): List<BackendAudioTrack> {
         val list = mediaPlayer?.audioTracks ?: return emptyList()

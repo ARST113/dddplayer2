@@ -98,6 +98,7 @@ class PlayerManager(
     var onBackendEnded: (() -> Unit)? = null
     var onBackendError: ((Throwable) -> Unit)? = null
     var onBackendPositionChanged: ((Long, Long) -> Unit)? = null
+    var onBackendVideoSizeChanged: ((Int, Int, Float) -> Unit)? = null
 
     private val resolvedMediaTypes = ConcurrentHashMap<String, String>()
 
@@ -845,6 +846,9 @@ class PlayerManager(
             }
             override fun onPositionChanged(positionMs: Long, durationMs: Long) {
                 onBackendPositionChanged?.invoke(positionMs, durationMs)
+            }
+            override fun onVideoSizeChanged(width: Int, height: Int, pixelWidthHeightRatio: Float) {
+                onBackendVideoSizeChanged?.invoke(width, height, pixelWidthHeightRatio)
             }
         })
     }

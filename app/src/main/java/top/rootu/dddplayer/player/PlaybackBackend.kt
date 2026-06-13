@@ -11,6 +11,7 @@ interface PlaybackBackend {
         fun onEnded() {}
         fun onError(error: Throwable) {}
         fun onPositionChanged(positionMs: Long, durationMs: Long) {}
+        fun onVideoSizeChanged(width: Int, height: Int, pixelWidthHeightRatio: Float) {}
     }
 
     fun attachSurfaceHolder(surfaceHolder: SurfaceHolder?)
