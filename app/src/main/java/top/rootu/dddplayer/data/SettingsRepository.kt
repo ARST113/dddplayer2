@@ -21,6 +21,7 @@ class SettingsRepository private constructor(context: Context) {
 
         const val PLAYBACK_ENGINE_AUTO = "AUTO"
         const val PLAYBACK_ENGINE_MEDIA3_ONLY = "MEDIA3_ONLY"
+        const val PLAYBACK_ENGINE_DDD_NATIVE = "DDD_NATIVE"
         const val PLAYBACK_ENGINE_VLC_ONLY = "VLC_ONLY"
         const val PLAYBACK_ENGINE_VLC_FALLBACK = "VLC_FALLBACK"
 

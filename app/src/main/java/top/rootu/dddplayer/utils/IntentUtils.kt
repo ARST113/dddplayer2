@@ -16,9 +16,34 @@ import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
+    private const val DDD_QUERY_PREFIX = "ddd_"
+
+    private fun stripDddMetadata(uri: Uri?): Uri? {
+        if (uri == null) return null
+
+        val filteredQuery = uri.encodedQuery
+            ?.split("&")
+            ?.filter { part ->
+                val encodedKey = part.substringBefore('=')
+                val key = try {
+                    Uri.decode(encodedKey)
+                } catch (_: Throwable) {
+                    encodedKey
+                }
+                !key.startsWith(DDD_QUERY_PREFIX)
+            }
+            ?.joinToString("&")
+            .orEmpty()
+
+        return uri.buildUpon()
+            .encodedQuery(filteredQuery.takeIf { it.isNotBlank() })
+            .fragment(null)
+            .build()
+    }
+
     private fun normalizePlaybackUri(uri: Uri?): String {
         if (uri == null) return ""
-        val clean = uri.buildUpon().fragment(null).build()
+        val clean = stripDddMetadata(uri) ?: return ""
         return clean.toString().replace("%20", " ").trim()
     }
 
@@ -76,7 +101,7 @@ object IntentUtils {
 
     fun parseBridgeConfig(intent: Intent): BridgeConfig {
         val data = intent.data
-        val fragmentParams = parseFragmentParams(data?.fragment)
+        val fragmentParams = parseDddParams(data)
         val extrasMode = intent.getStringExtra("bridge_mode")
         val modeValue = fragmentParams["ddd_mode"] ?: extrasMode
         val mode = when (modeValue?.lowercase()) {
@@ -104,7 +129,7 @@ object IntentUtils {
 
     private fun parseSingleFile(context: Context, intent: Intent): Pair<List<MediaItem>, Int> {
         val rawUri = intent.data ?: return Pair(emptyList(), 0)
-        val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: return Pair(emptyList(), 0)
+        val uri = stripDddMetadata(rawUri) ?: return Pair(emptyList(), 0)
         val extras = intent.extras ?: Bundle.EMPTY
 
         // Пытаемся найти заголовок в Extras (некоторые приложения передают его)
@@ -146,7 +171,7 @@ object IntentUtils {
         videoListUris: Array<Parcelable>,
         dataUri: Uri?
     ): Pair<List<MediaItem>, Int> {
-        val cleanDataUri = dataUri?.buildUpon()?.fragment(null)?.build()
+        val cleanDataUri = stripDddMetadata(dataUri)
         val names = getSmartStringArray(extras, "video_list.name")
         val filenames = getSmartStringArray(extras, "video_list.filename")
         val posters = getSmartStringArray(extras, "video_list.thumbnail")
@@ -160,7 +185,7 @@ object IntentUtils {
 
         for (i in videoListUris.indices) {
             val rawUri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri()) ?: continue
-            val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: continue
+            val uri = stripDddMetadata(rawUri) ?: continue
 
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
@@ -223,11 +248,26 @@ object IntentUtils {
             .orEmpty()
     }
 
+    private fun parseDddParams(uri: Uri?): Map<String, String> {
+        if (uri == null) return emptyMap()
+
+        val queryParams = try {
+            uri.queryParameterNames
+                .filter { it.startsWith(DDD_QUERY_PREFIX) }
+                .associateWith { uri.getQueryParameter(it).orEmpty() }
+        } catch (_: Throwable) {
+            emptyMap()
+        }
+
+        // Fragment values win in browsers; query values survive Android Intents.
+        return queryParams + parseFragmentParams(uri.fragment)
+    }
+
     private fun parseDddSyncContext(uri: Uri?, title: String?, filename: String?): DddSyncContext? {
-        val params = parseFragmentParams(uri?.fragment)
+        val params = parseDddParams(uri)
         val remoteEventsUrl = params["ddd_remote_events_url"] ?: return null
         val deviceId = params["ddd_device_id"] ?: return null
-        val cleanUri = uri?.buildUpon()?.fragment(null)?.build()?.toString()
+        val cleanUri = stripDddMetadata(uri)?.toString()
 
         return DddSyncContext(
             remoteEventsUrl = remoteEventsUrl,

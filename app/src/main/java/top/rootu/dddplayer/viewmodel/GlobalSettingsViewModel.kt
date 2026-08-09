@@ -144,7 +144,8 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
         val current = _playbackEngine.value ?: SettingsRepository.PLAYBACK_ENGINE_AUTO
         val next = when (current) {
             SettingsRepository.PLAYBACK_ENGINE_AUTO -> SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY
-            SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK
+            SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> SettingsRepository.PLAYBACK_ENGINE_DDD_NATIVE
+            SettingsRepository.PLAYBACK_ENGINE_DDD_NATIVE -> SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK
             SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY
             else -> SettingsRepository.PLAYBACK_ENGINE_AUTO
         }
@@ -359,6 +360,7 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
 
     fun getPlaybackEngineLabel(value: String): Int = when (value) {
         SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> R.string.pref_playback_engine_media3
+        SettingsRepository.PLAYBACK_ENGINE_DDD_NATIVE -> R.string.pref_playback_engine_ddd_native
         SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> R.string.pref_playback_engine_vlc_fallback
         SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY -> R.string.pref_playback_engine_vlc_only
         else -> R.string.pref_playback_engine_auto

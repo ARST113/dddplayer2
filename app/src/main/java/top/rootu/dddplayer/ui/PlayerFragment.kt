@@ -2,11 +2,16 @@ package top.rootu.dddplayer.ui
 
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.app.UiModeManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -81,6 +86,7 @@ class PlayerFragment : Fragment() {
     // Жесты
     private lateinit var gestureDetector: GestureDetector
     private lateinit var touchHandler: PlayerTouchHandler
+    private var isTvDevice = true
 
     // Накопление перемотки по двойному тапу
     private var doubleTapSeekSeconds = 0
@@ -145,6 +151,7 @@ class PlayerFragment : Fragment() {
 
         // Используем Application Context для репозитория, чтобы избежать утечек
         val settingsRepo = SettingsRepository.getInstance(requireContext().applicationContext)
+        isTvDevice = detectTvDevice()
 
         // Устанавливаем видимость часов на основе настроек
         ui.setStandaloneClockEnabled(settingsRepo.isShowClock())
@@ -156,7 +163,8 @@ class PlayerFragment : Fragment() {
             onShowControls = { ui.showControls(); timerController.resetControlsTimer() },
             onHideControls = { ui.hideControls() },
             onResetHideTimer = { timerController.resetControlsTimer() },
-            onShowPlaylist = { showPlaylist() }
+            onShowPlaylist = { showPlaylist() },
+            isTvDevice = isTvDevice
         )
 
         swipeAction = settingsRepo.getHorizontalSwipeAction()
@@ -168,16 +176,7 @@ class PlayerFragment : Fragment() {
             context = requireContext(),
             screenWidth = displayMetrics.widthPixels,
             onSingleTap = {
-                // Логика одиночного тапа (показать/скрыть контролы)
-                if (settingsViewModel.isSettingsPanelVisible.value == true) {
-                    settingsViewModel.closePanel()
-                    viewModel.saveCurrentSettings()
-                } else if (ui.controlsView.isVisible) {
-                    ui.hideControls()
-                } else {
-                    ui.showControls()
-                    timerController.resetControlsTimer()
-                }
+                handleSingleTap()
             },
             onDoubleTapSeek = { forward ->
                 handleDoubleTapSeek(forward)
@@ -242,6 +241,39 @@ class PlayerFragment : Fragment() {
     private fun attachSurfaceToPlayer(player: Player) {
         player.setVideoSurfaceView(ui.standardSurfaceView)
         viewModel.bindSurfaceHolder(ui.standardSurfaceView.holder)
+    }
+
+    private fun detectTvDevice(): Boolean {
+        val context = requireContext().applicationContext
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+        val isTelevisionMode = uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        val hasLeanback = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+        return isTelevisionMode || hasLeanback
+    }
+
+    private fun handleSingleTap() {
+        if (settingsViewModel.isSettingsPanelVisible.value == true) {
+            settingsViewModel.closePanel()
+            viewModel.saveCurrentSettings()
+            return
+        }
+
+        if (sideMenuDialog?.isShowing == true) return
+
+        if (!isTvDevice && !ui.controlsView.isVisible) {
+            viewModel.emitUserAction("single_tap_play_pause")
+            viewModel.togglePlayPause()
+            ui.showControls()
+            timerController.resetControlsTimer()
+            return
+        }
+
+        if (ui.controlsView.isVisible) {
+            ui.hideControls()
+        } else {
+            ui.showControls()
+            timerController.resetControlsTimer()
+        }
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -1007,6 +1039,20 @@ class PlayerFragment : Fragment() {
         viewModel.currentQualityName.observe(viewLifecycleOwner) { ui.buttonQuality.text = it }
 
         viewModel.videoResolution.observe(viewLifecycleOwner) { ui.badgeResolution.text = compactVideoInfoBadge(it) }
+        viewModel.hdrModeInfo.observe(viewLifecycleOwner) { hdr ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val colorMode = if (hdr.isHdr) {
+                    ActivityInfo.COLOR_MODE_HDR
+                } else {
+                    ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+                }
+                requireActivity().window.colorMode = colorMode
+                android.util.Log.i(
+                    "DDDPlayer/HDR",
+                    "windowColorMode=${if (hdr.isHdr) "HDR" else "WIDE_COLOR_GAMUT"} kind=${hdr.kind} transfer=${hdr.transfer} primaries=${hdr.primaries}"
+                )
+            }
+        }
         viewModel.videoAspectRatio.observe(viewLifecycleOwner) { ui.setAspectRatio(it) }
         viewModel.audioOutputInfo.observe(viewLifecycleOwner) { updateAudioBadge() }
         viewModel.currentAudioTrack.observe(viewLifecycleOwner) { trackOption ->
@@ -1272,7 +1318,7 @@ class PlayerFragment : Fragment() {
         }
         val text = compactTrackBadgeLabel(res)
         ui.badgeAudio.text = text
-        android.util.Log.i("DDDPlayer/UI", "topAudioBadge.text=$text full=$res source=$source selectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} lastSelectedAudioTrackId=${viewModel.getVlcSelectedAudioTrackIdForUi()} tracks=${viewModel.getVlcAudioTracksForUi().map { "${it.id}:${it.label}" }}")
+        android.util.Log.i("DDDPlayer/UI", "topAudioBadge.text=$text full=$res source=$source selectedAudioTrackId=${viewModel.getBackendSelectedAudioTrackIdForUi()} lastSelectedAudioTrackId=${viewModel.getBackendSelectedAudioTrackIdForUi()} tracks=${viewModel.getBackendAudioTracksForUi().map { "${it.id}:${it.label}" }}")
     }
 
     private fun showPlaylist() {

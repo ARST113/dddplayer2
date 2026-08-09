@@ -212,6 +212,7 @@
     <string name="pref_playback_engine">Движок воспроизведения</string>
     <string name="pref_playback_engine_auto">Авто</string>
     <string name="pref_playback_engine_media3">Media3</string>
+    <string name="pref_playback_engine_ddd_native">DDD Native</string>
     <string name="pref_playback_engine_vlc_fallback">VLC fallback</string>
     <string name="pref_playback_engine_vlc_only">Только VLC</string>
     <string name="pref_fallback_decoder_error">Fallback при ошибке видеодекодера</string>

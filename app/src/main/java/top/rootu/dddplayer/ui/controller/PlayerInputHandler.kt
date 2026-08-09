@@ -19,7 +19,8 @@ class PlayerInputHandler(
     private val onShowControls: () -> Unit,
     private val onHideControls: () -> Unit,
     private val onResetHideTimer: () -> Unit,
-    private val onShowPlaylist: () -> Unit
+    private val onShowPlaylist: () -> Unit,
+    private val isTvDevice: Boolean = true
 ) {
 
     private var seekAccelerationCount = 0
@@ -78,7 +79,22 @@ class PlayerInputHandler(
         if (ui.controlsView.isVisible) onResetHideTimer()
 
         when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+            KeyEvent.KEYCODE_ENTER -> {
+                if (!isTvDevice) {
+                    viewModel.emitUserAction("keyboard_enter_play_pause")
+                    viewModel.togglePlayPause()
+                    onShowControls()
+                    return true
+                }
+
+                if (!ui.controlsView.isVisible) {
+                    viewModel.togglePlayPause()
+                    onShowControls()
+                    return true
+                }
+            }
+
+            KeyEvent.KEYCODE_DPAD_CENTER -> {
                 if (!ui.controlsView.isVisible) {
                     viewModel.togglePlayPause()
                     onShowControls()

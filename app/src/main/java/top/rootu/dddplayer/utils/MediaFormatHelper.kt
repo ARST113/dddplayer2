@@ -371,44 +371,128 @@ object MediaFormatHelper {
         }
     }
 
+    data class HdrModeInfo(
+        val label: String,
+        val isHdr: Boolean,
+        val kind: String,
+        val transfer: String,
+        val primaries: String,
+        val range: String,
+        val dolbyVisionProfile: Int?,
+        val codecString: String,
+        val mimeType: String?
+    )
+
     /**
-     * Определяет, является ли видео HDR (HDR10, HLG, Dolby Vision)
+     * Normalized HDR probe for the future DDD native engine.
+     * Media3/VLC can still render today, while this keeps color decisions
+     * explicit for badges, logs and Android window color mode.
      */
-    fun getHdrInfo(format: Format): String {
-        val codecs = format.codecs ?: ""
+    fun getHdrModeInfo(format: Format): HdrModeInfo {
+        val codecs = format.codecs.orEmpty()
         val colorInfo = format.colorInfo
+        val transferValue = colorInfo?.colorTransfer ?: -1
+        val colorSpaceValue = colorInfo?.colorSpace ?: -1
+        val colorRangeValue = colorInfo?.colorRange ?: -1
+        val dvProfile = getDolbyVisionProfile(format)
+        val isDolbyVision = format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION || dvProfile != null
 
-        // Проверяем Dolby Vision и извлекаем профиль
-        // Формат строки: dvhe.07.06 или dvh1.05.03
-        if (format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION ||
-            codecs.startsWith("dvh1") || codecs.startsWith("dvhe")) {
-
-            val parts = codecs.split(".")
-            if (parts.size >= 2) {
-                val profile = parts[1].toIntOrNull()
-                if (profile != null) {
-                    return "DV.$profile" // Например: DV.7, DV.5
-                }
-            }
-            return "DV"
+        if (isDolbyVision) {
+            val label = dvProfile?.let { "DV.$it" } ?: "DV"
+            return HdrModeInfo(
+                label = label,
+                isHdr = true,
+                kind = "DOLBY_VISION",
+                transfer = colorTransferName(transferValue),
+                primaries = colorSpaceName(colorSpaceValue),
+                range = colorRangeName(colorRangeValue),
+                dolbyVisionProfile = dvProfile,
+                codecString = codecs,
+                mimeType = format.sampleMimeType
+            )
         }
 
-        // Проверяем HDR10+ по кодеку (HEVC Profile Main10 HDR10+)
-        // В ExoPlayer строка кодека для HDR10+ часто выглядит как hev1.2.4.L153.B0 (где 4 - это профиль)
-        // Но надежнее проверить ColorInfo
-        if (colorInfo != null) {
-            when (colorInfo.colorTransfer) {
-                C.COLOR_TRANSFER_ST2084 -> {
-                    // Это PQ (Perceptual Quantizer). Может быть HDR10 или HDR10+.
-                    return "HDR"
-                }
-                C.COLOR_TRANSFER_HLG -> return "HLG"
-            }
+        return when (transferValue) {
+            C.COLOR_TRANSFER_ST2084 -> HdrModeInfo(
+                label = "HDR",
+                isHdr = true,
+                kind = "HDR10_PQ",
+                transfer = colorTransferName(transferValue),
+                primaries = colorSpaceName(colorSpaceValue),
+                range = colorRangeName(colorRangeValue),
+                dolbyVisionProfile = null,
+                codecString = codecs,
+                mimeType = format.sampleMimeType
+            )
+            C.COLOR_TRANSFER_HLG -> HdrModeInfo(
+                label = "HLG",
+                isHdr = true,
+                kind = "HLG",
+                transfer = colorTransferName(transferValue),
+                primaries = colorSpaceName(colorSpaceValue),
+                range = colorRangeName(colorRangeValue),
+                dolbyVisionProfile = null,
+                codecString = codecs,
+                mimeType = format.sampleMimeType
+            )
+            else -> HdrModeInfo(
+                label = "",
+                isHdr = false,
+                kind = "SDR",
+                transfer = colorTransferName(transferValue),
+                primaries = colorSpaceName(colorSpaceValue),
+                range = colorRangeName(colorRangeValue),
+                dolbyVisionProfile = null,
+                codecString = codecs,
+                mimeType = format.sampleMimeType
+            )
         }
-
-        return "" // SDR
     }
 
+    /**
+     * Determines whether video is HDR (HDR10/PQ, HLG or Dolby Vision).
+     */
+    fun getHdrInfo(format: Format): String = getHdrModeInfo(format).label
+
+    private fun getDolbyVisionProfile(format: Format): Int? {
+        val codecs = format.codecs.orEmpty()
+        if (format.sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION &&
+            !codecs.startsWith("dvh1") &&
+            !codecs.startsWith("dvhe")) {
+            return null
+        }
+
+        return codecs
+            .split('.')
+            .getOrNull(1)
+            ?.toIntOrNull()
+    }
+
+    private fun colorTransferName(value: Int): String {
+        return when (value) {
+            C.COLOR_TRANSFER_ST2084 -> "ST2084/PQ"
+            C.COLOR_TRANSFER_HLG -> "HLG"
+            C.COLOR_TRANSFER_SDR -> "SDR"
+            else -> "UNKNOWN($value)"
+        }
+    }
+
+    private fun colorSpaceName(value: Int): String {
+        return when (value) {
+            C.COLOR_SPACE_BT2020 -> "BT2020"
+            C.COLOR_SPACE_BT709 -> "BT709"
+            C.COLOR_SPACE_BT601 -> "BT601"
+            else -> "UNKNOWN($value)"
+        }
+    }
+
+    private fun colorRangeName(value: Int): String {
+        return when (value) {
+            C.COLOR_RANGE_FULL -> "FULL"
+            C.COLOR_RANGE_LIMITED -> "LIMITED"
+            else -> "UNKNOWN($value)"
+        }
+    }
     // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
     /**

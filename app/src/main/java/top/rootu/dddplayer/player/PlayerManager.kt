@@ -48,6 +48,9 @@ import top.rootu.dddplayer.data.SettingsRepository
 import top.rootu.dddplayer.logic.AudioMixerLogic
 import top.rootu.dddplayer.logic.UnifiedMetadataReader
 import top.rootu.dddplayer.model.MediaItem
+import top.rootu.dddplayer.player.core.DddPlaybackCore
+import top.rootu.dddplayer.player.core.DddStreamProbe
+import top.rootu.dddplayer.player.nativecore.DddNativeBackend
 import top.rootu.dddplayer.utils.MediaFormatHelper
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -69,6 +72,8 @@ class PlayerManager(
     private var playerListener: Player.Listener? = listener
     private val appContext = context.applicationContext
     private val settingsRepo = SettingsRepository.getInstance(appContext)
+    private val playbackCore = DddPlaybackCore(appContext, settingsRepo)
+    private var didLogCoreRuntimeProfile = false
 
     var exoPlayer: ExoPlayer? = null
         private set
@@ -88,6 +93,7 @@ class PlayerManager(
     private var activeBackend: PlaybackBackend? = null
     private var media3Backend: Media3Backend? = null
     private var vlcBackend: VlcBackend? = null
+    private var nativeBackend: DddNativeBackend? = null
     private var forceVlcForCurrentPlaylistSession: Boolean = false
     var onMetadataAvailable: (() -> Unit)? = null
     var onPlayerCreated: ((ExoPlayer) -> Unit)? = null
@@ -100,6 +106,16 @@ class PlayerManager(
     var onBackendPositionChanged: ((Long, Long) -> Unit)? = null
     var onBackendVideoSizeChanged: ((Int, Int, Float) -> Unit)? = null
 
+    private fun logCoreLoad(items: List<MediaItem>, startIndex: Int) {
+        if (!didLogCoreRuntimeProfile) {
+            playbackCore.logRuntimeProfile()
+            didLogCoreRuntimeProfile = true
+        }
+
+        val item = items.getOrNull(startIndex) ?: return
+        val probe = DddStreamProbe.probeUri(item.uri)
+        Log.i("DDDPlayer/Core", "streamProbe startIndex=$startIndex title=${item.title} probe=$probe")
+    }
     private val resolvedMediaTypes = ConcurrentHashMap<String, String>()
 
     private val trustAllCerts = arrayOf<TrustManager>(@SuppressLint("CustomX509TrustManager")
@@ -215,6 +231,12 @@ class PlayerManager(
     }
 
     fun initializePlayer() {
+        if (activeBackend === nativeBackend || nativeBackend != null) {
+            Log.i(backendTag, "Releasing DDD Native before Media3 initialization")
+            nativeBackend?.release()
+            if (activeBackend === nativeBackend) activeBackend = null
+            nativeBackend = null
+        }
         if (activeBackend === vlcBackend || vlcBackend != null) {
             Log.i(backendTag, "Releasing VLC before Media3 initialization")
             vlcBackend?.release()
@@ -459,6 +481,7 @@ class PlayerManager(
         activeBackend = media3Backend
         boundSurfaceHolder?.let { media3Backend?.attachSurfaceHolder(it) }
         Log.i(backendTag, "Active backend=MEDIA3")
+        playbackCore.logPipeline(getActiveBackendId(), "initialize_media3")
 
         // 6. Restore State
         if (currentMediaItems.isNotEmpty()) {
@@ -552,6 +575,7 @@ class PlayerManager(
 
     fun loadPlaylist(items: List<MediaItem>, startIndex: Int, startPosMs: Long = 0) {
         currentPlaylistItems = items
+        logCoreLoad(items, startIndex)
         Log.i(backendTag, "Selected playback engine=${settingsRepo.getPlaybackEngine()}")
         currentTrackInfo = emptyMap()
         forceVlcForCurrentPlaylistSession = false
@@ -598,6 +622,31 @@ class PlayerManager(
         currentPosition = if (startPosMs <= 0L) C.TIME_UNSET else startPosMs
         playWhenReady = true
 
+        if (settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_DDD_NATIVE) {
+            val selected = items.getOrNull(startIndex) ?: return
+            if (!DddNativeBackend.isAvailable()) {
+                onBackendError?.invoke(
+                    IllegalStateException("DDD Native is unavailable for this device ABI")
+                )
+                return
+            }
+            if (activeBackend === media3Backend) {
+                exoPlayer?.stop()
+                exoPlayer?.release()
+                exoPlayer = null
+                media3Backend = null
+                mediaSession?.release()
+                mediaSession = null
+            }
+            val backend = nativeBackend ?: DddNativeBackend().also { nativeBackend = it }
+            backend.attachSurfaceHolder(boundSurfaceHolder)
+            attachNativeListener(backend)
+            activeBackend = backend
+            Log.i(backendTag, "DDD Native prepare uri=${selected.uri} index=$startIndex")
+            backend.prepare(selected.uri, selected.headers, startPosMs)
+            playbackCore.logPipeline(getActiveBackendId(), "load_playlist_native")
+            return
+        }
         if (settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY) {
             if (activeBackend === media3Backend) {
                 exoPlayer?.stop()
@@ -617,6 +666,7 @@ class PlayerManager(
             backend.prepare(selected.uri, selected.headers, startPosMs, selected.subtitles)
             activeBackend = backend
             Log.i(backendTag, "Active backend=VLC")
+            playbackCore.logPipeline(getActiveBackendId(), "load_playlist_vlc_only")
             return
         }
         if (exoPlayer == null) {
@@ -681,32 +731,46 @@ class PlayerManager(
     }
 
     fun getActiveBackendId(): String = when (activeBackend) {
+        nativeBackend -> "DDD_NATIVE"
         vlcBackend -> "VLC"
         media3Backend -> "MEDIA3"
         else -> "NONE"
     }
 
+    fun usesBackendTrackApi(): Boolean =
+        activeBackend === vlcBackend || activeBackend === nativeBackend
 
-    fun getCurrentUri(): String? = when (activeBackend) {
-        vlcBackend -> currentPlaylistItems.getOrNull(currentWindowIndex)?.uri?.toString()
-        else -> exoPlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
-    }
-    fun getCurrentWindowIndex(): Int = when (activeBackend) {
-        vlcBackend -> currentWindowIndex
-        else -> exoPlayer?.currentMediaItemIndex ?: currentWindowIndex
-    }
+    private fun usesBackendPlaylistState(): Boolean = usesBackendTrackApi()
+
+    fun getCurrentUri(): String? =
+        if (usesBackendPlaylistState()) {
+            currentPlaylistItems.getOrNull(currentWindowIndex)?.uri?.toString()
+        } else {
+            exoPlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
+        }
+
+    fun getCurrentWindowIndex(): Int =
+        if (usesBackendPlaylistState()) {
+            currentWindowIndex
+        } else {
+            exoPlayer?.currentMediaItemIndex ?: currentWindowIndex
+        }
+
     fun getPlaylistSize(): Int = currentPlaylistItems.size
-    fun getCurrentTitle(): String? = when (activeBackend) {
-        vlcBackend -> currentPlaylistItems.getOrNull(currentWindowIndex)?.title
-        else -> exoPlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
-    }
+
+    fun getCurrentTitle(): String? =
+        if (usesBackendPlaylistState()) {
+            currentPlaylistItems.getOrNull(currentWindowIndex)?.title
+        } else {
+            exoPlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
+        }
+
     fun getPlaybackStateCompat(): Int = when {
-        activeBackend === vlcBackend && isPlaying() -> Player.STATE_READY
-        activeBackend === vlcBackend && getPositionMs() > 0L && !isPlaying() -> Player.STATE_READY
-        activeBackend === vlcBackend -> Player.STATE_BUFFERING
+        usesBackendPlaylistState() && isPlaying() -> Player.STATE_READY
+        usesBackendPlaylistState() && getPositionMs() > 0L -> Player.STATE_READY
+        usesBackendPlaylistState() -> Player.STATE_BUFFERING
         else -> exoPlayer?.playbackState ?: Player.STATE_IDLE
     }
-
     fun getPositionMs(): Long = activeBackend?.getPositionMs() ?: (exoPlayer?.currentPosition ?: 0L)
     fun getDurationMs(): Long = activeBackend?.getDurationMs() ?: (exoPlayer?.duration ?: 0L)
     fun isPlaying(): Boolean = activeBackend?.isPlaying() ?: (exoPlayer?.isPlaying == true)
@@ -728,6 +792,21 @@ class PlayerManager(
         currentWindowIndex = index
         val item = currentPlaylistItems[index]
         Log.i(vlcTag, "fallback index=$index uri=${item.uri} title=${item.title}")
+        val useNative =
+            activeBackend === nativeBackend ||
+                settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_DDD_NATIVE
+        if (useNative) {
+            if (!DddNativeBackend.isAvailable()) return false
+            val backend = nativeBackend ?: DddNativeBackend().also { nativeBackend = it }
+            backend.attachSurfaceHolder(boundSurfaceHolder)
+            attachNativeListener(backend)
+            activeBackend = backend
+            backend.prepare(item.uri, item.headers, startPositionMs)
+            Log.i(backendTag, "playIndex DDD Native index=$index uri=${item.uri}")
+            playbackCore.logPipeline(getActiveBackendId(), "play_index_native")
+            return true
+        }
+
         val useVlc = activeBackend === vlcBackend || forceVlcForCurrentPlaylistSession || settingsRepo.getPlaybackEngine() == SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY
         Log.i(vlcTag, "playIndex useVlc=$useVlc forceVlcForSession=$forceVlcForCurrentPlaylistSession index=$index")
         if (useVlc) {
@@ -737,11 +816,13 @@ class PlayerManager(
             backend.prepare(item.uri, item.headers, startPositionMs, item.subtitles)
             activeBackend = backend
             Log.i(vlcTag, "playIndex VLC index=$index uri=${item.uri}")
+            playbackCore.logPipeline(getActiveBackendId(), "play_index_vlc")
             return true
         }
         exoPlayer?.seekTo(index, startPositionMs)
         exoPlayer?.prepare()
         exoPlayer?.play()
+        playbackCore.logPipeline(getActiveBackendId(), "play_index_media3")
         return true
     }
 
@@ -757,34 +838,56 @@ class PlayerManager(
         return playIndex(target)
     }
 
-    fun getVlcAudioTracks(): List<BackendAudioTrack> = vlcBackend?.getAudioTracks() ?: emptyList()
-    fun getVlcSelectedAudioTrackId(): Int? = vlcBackend?.getSelectedAudioTrack()
-    fun selectVlcAudioTrackById(id: Int): Boolean = vlcBackend?.selectAudioTrack(id) == true
-    fun getVlcSubtitleTracks(): List<BackendSubtitleTrack> = vlcBackend?.getSubtitleTracks() ?: emptyList()
-    fun getVlcSelectedSubtitleTrackId(): Int? = vlcBackend?.getSelectedSubtitleTrack()
-    fun selectVlcSubtitleTrackById(id: Int): Boolean = vlcBackend?.selectSubtitleTrack(id) == true
-    fun getCurrentAudioTrackLabel(): String? {
-        return when (activeBackend) {
-        vlcBackend -> {
-            val tracks = getVlcAudioTracks()
-            if (tracks.isEmpty()) return null
-            val selected = getVlcSelectedAudioTrackId()
-            tracks.firstOrNull { it.id == selected }?.label ?: tracks.firstOrNull()?.label
-        }
-        else -> exoPlayer?.currentTracks
-            ?.groups
-            ?.firstOrNull { it.type == C.TRACK_TYPE_AUDIO }
-            ?.let { group ->
-                val idx = (0 until group.length).firstOrNull { group.isTrackSelected(it) } ?: return@let null
-                group.getTrackFormat(idx).label
-            }
-        }
+    fun getBackendAudioTracks(): List<BackendAudioTrack> = when (activeBackend) {
+        nativeBackend -> nativeBackend?.getAudioTracks().orEmpty()
+        vlcBackend -> vlcBackend?.getAudioTracks().orEmpty()
+        else -> emptyList()
     }
 
+    fun getBackendSelectedAudioTrackId(): Int? = when (activeBackend) {
+        nativeBackend -> nativeBackend?.getSelectedAudioTrack()
+        vlcBackend -> vlcBackend?.getSelectedAudioTrack()
+        else -> null
+    }
+
+    fun selectBackendAudioTrackById(id: Int): Boolean = when (activeBackend) {
+        nativeBackend -> nativeBackend?.selectAudioTrack(id) == true
+        vlcBackend -> vlcBackend?.selectAudioTrack(id) == true
+        else -> false
+    }
+
+    fun getBackendSubtitleTracks(): List<BackendSubtitleTrack> =
+        if (activeBackend === vlcBackend) vlcBackend?.getSubtitleTracks().orEmpty() else emptyList()
+
+    fun getBackendSelectedSubtitleTrackId(): Int? =
+        if (activeBackend === vlcBackend) vlcBackend?.getSelectedSubtitleTrack() else null
+
+    fun selectBackendSubtitleTrackById(id: Int): Boolean =
+        activeBackend === vlcBackend && vlcBackend?.selectSubtitleTrack(id) == true
+
+    fun getCurrentAudioTrackLabel(): String? {
+        return when {
+            usesBackendTrackApi() -> {
+                val tracks = getBackendAudioTracks()
+                if (tracks.isEmpty()) return null
+                val selected = getBackendSelectedAudioTrackId()
+                tracks.firstOrNull { it.id == selected }?.label ?: tracks.firstOrNull()?.label
+            }
+            else -> exoPlayer?.currentTracks
+                ?.groups
+                ?.firstOrNull { it.type == C.TRACK_TYPE_AUDIO }
+                ?.let { group ->
+                    val idx = (0 until group.length).firstOrNull { group.isTrackSelected(it) }
+                        ?: return@let null
+                    group.getTrackFormat(idx).label
+                }
+        }
+    }
     fun releaseActiveBackend() {
         activeBackend?.stop()
         activeBackend?.release()
         if (activeBackend === vlcBackend) vlcBackend = null
+        if (activeBackend === nativeBackend) nativeBackend = null
         if (activeBackend === media3Backend) media3Backend = null
         activeBackend = null
     }
@@ -826,10 +929,33 @@ class PlayerManager(
         activeBackend = backend
         forceVlcForCurrentPlaylistSession = true
         Log.i(backendTag, "Active backend=VLC")
+        playbackCore.logPipeline(getActiveBackendId(), "decoder_fallback_to_vlc")
         return true
     }
 
 
+    private fun attachNativeListener(backend: DddNativeBackend) {
+        backend.setListener(object : PlaybackBackend.Listener {
+            override fun onBuffering() { onBackendBufferingChanged?.invoke(true) }
+            override fun onPlaying() {
+                Log.i(backendTag, "DDD Native playing")
+                onBackendBufferingChanged?.invoke(false)
+                onBackendPlayingChanged?.invoke(true)
+            }
+            override fun onPaused() { onBackendPlayingChanged?.invoke(false) }
+            override fun onEnded() { onBackendEnded?.invoke() }
+            override fun onError(error: Throwable) {
+                Log.e(backendTag, "DDD Native error", error)
+                onBackendError?.invoke(error)
+            }
+            override fun onPositionChanged(positionMs: Long, durationMs: Long) {
+                onBackendPositionChanged?.invoke(positionMs, durationMs)
+            }
+            override fun onVideoSizeChanged(width: Int, height: Int, pixelWidthHeightRatio: Float) {
+                onBackendVideoSizeChanged?.invoke(width, height, pixelWidthHeightRatio)
+            }
+        })
+    }
     private fun attachVlcListener(backend: VlcBackend) {
         backend.setListener(object : PlaybackBackend.Listener {
             override fun onBuffering() { onBackendBufferingChanged?.invoke(true) }

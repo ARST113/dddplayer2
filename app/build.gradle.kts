@@ -54,8 +54,19 @@ android {
         println("Building Version: $versionName ($versionCode)")
 
         vectorDrawables.useSupportLibrary = true
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17", "-Wall", "-Wextra")
+            }
+        }
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
     buildFeatures {
         buildConfig = true
         viewBinding = false
