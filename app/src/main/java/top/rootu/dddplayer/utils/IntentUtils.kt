@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.provider.OpenableColumns
 import androidx.core.net.toUri
+import org.json.JSONObject
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeMode
 import top.rootu.dddplayer.bridge.DddSyncContext
@@ -17,6 +18,7 @@ import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
     private const val DDD_QUERY_PREFIX = "ddd_"
+    private const val DDD_SYNC_HEADER = "X-Lampa-DDD-Sync"
 
     private fun stripDddMetadata(uri: Uri?): Uri? {
         if (uri == null) return null
@@ -142,7 +144,7 @@ object IntentUtils {
             title = filename ?: uri.lastPathSegment ?: "Video"
         }
 
-        val syncContext = parseDddSyncContext(rawUri, title, filename)
+        val syncContext = parseDddSyncContext(rawUri, title, filename, extras)
         val startPosition = getLongExtraCompat(extras, "position", 0L)
             .takeIf { it > 0L }
             ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
@@ -178,6 +180,7 @@ object IntentUtils {
         val playlistSubsBundles = getParcelableArrayListCompat<Bundle>(extras, "video_list.subtitles")
 
         val headersMap = parseHeaders(extras)
+        val nativeSyncActiveIndex = parseNativeSyncActiveIndex(extras)
 
         val playlist = mutableListOf<MediaItem>()
         val extrasStartIndex = extras.getInt("start_index", 0)
@@ -190,7 +193,7 @@ object IntentUtils {
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
             if (title.isNullOrEmpty()) title = uri.lastPathSegment
-            val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i))
+            val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i), extras, i)
 
             val itemSubs = if (playlistSubsBundles != null && i < playlistSubsBundles.size) {
                 parseSubtitles(playlistSubsBundles[i], "uris", "names")
@@ -224,6 +227,7 @@ object IntentUtils {
         }
         val startIndex = when {
             playlist.isEmpty() -> 0
+            nativeSyncActiveIndex != null -> nativeSyncActiveIndex.coerceIn(0, playlist.lastIndex)
             cleanDataUri != null && matchedStartIndex != null -> matchedStartIndex!!
             cleanDataUri != null -> 0
             else -> extrasStartIndex.coerceIn(0, playlist.lastIndex)
@@ -263,34 +267,136 @@ object IntentUtils {
         return queryParams + parseFragmentParams(uri.fragment)
     }
 
-    private fun parseDddSyncContext(uri: Uri?, title: String?, filename: String?): DddSyncContext? {
+    private fun parseDddSyncContext(
+        uri: Uri?,
+        title: String?,
+        filename: String?,
+        extras: Bundle? = null,
+        playlistIndex: Int? = null
+    ): DddSyncContext? {
         val params = parseDddParams(uri)
-        val remoteEventsUrl = params["ddd_remote_events_url"] ?: return null
-        val deviceId = params["ddd_device_id"] ?: return null
+        val remoteEventsUrl = params["ddd_remote_events_url"]
+        val deviceId = params["ddd_device_id"]
+
+        if (!remoteEventsUrl.isNullOrBlank() && !deviceId.isNullOrBlank()) {
+            val cleanUri = stripDddMetadata(uri)?.toString()
+
+            return DddSyncContext(
+                remoteEventsUrl = remoteEventsUrl,
+                remoteLatestUrl = params["ddd_remote_latest_url"],
+                schema = params["ddd_remote_schema"]?.toIntOrNull() ?: 1,
+                deviceId = deviceId,
+                sessionId = params["ddd_sid"] ?: params["bridge_session_id"],
+                contentKey = params["ddd_content_key"],
+                sourceKey = params["ddd_source_key"],
+                timelineHash = params["ddd_timeline_hash"],
+                sourceKind = params["ddd_source_kind"],
+                uri = cleanUri,
+                title = params["ddd_title"] ?: title,
+                filename = params["ddd_filename"] ?: filename,
+                lampaPositionMs = params["ddd_lampa_position"]?.toLongOrNull(),
+                lampaDurationMs = params["ddd_lampa_duration"]?.toLongOrNull(),
+                lampaPercent = params["ddd_lampa_percent"]?.toIntOrNull(),
+                lampaAudioTrack = params["ddd_audio_track"],
+                lampaAudioTrackId = params["ddd_audio_track_id"],
+                lampaAudioTrackIndex = params["ddd_audio_track_index"]?.toIntOrNull(),
+                lampaAudioTrackLanguage = params["ddd_audio_track_language"],
+                lampaAudioTrackMimeType = params["ddd_audio_track_mime"],
+                lampaAudioTrackChannelCount = params["ddd_audio_track_channels"]?.toIntOrNull()
+            ).takeIf { it.enabled }
+        }
+
+        return parseNativeSyncContext(extras, uri, title, filename, playlistIndex)
+    }
+
+    private fun nativeSyncEnvelope(extras: Bundle?): JSONObject? {
+        if (extras == null) return null
+
+        val headers = getSmartStringArray(extras, "headers") ?: return null
+        var encoded: String? = null
+
+        for (i in 0 until headers.size - 1 step 2) {
+            if (headers[i].equals(DDD_SYNC_HEADER, ignoreCase = true)) {
+                encoded = headers[i + 1]
+                break
+            }
+        }
+
+        if (encoded.isNullOrBlank()) return null
+
+        return try {
+            JSONObject(Uri.decode(encoded))
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseNativeSyncActiveIndex(extras: Bundle?): Int? {
+        val envelope = nativeSyncEnvelope(extras) ?: return null
+        if (!envelope.has("activeIndex") || envelope.isNull("activeIndex")) return null
+        return envelope.optInt("activeIndex", -1).takeIf { it >= 0 }
+    }
+
+    private fun parseNativeSyncContext(
+        extras: Bundle?,
+        uri: Uri?,
+        title: String?,
+        filename: String?,
+        playlistIndex: Int?
+    ): DddSyncContext? {
+        val envelope = nativeSyncEnvelope(extras) ?: return null
+        val eventsUrl = envelope.optString("eventsUrl").takeIf { it.isNotBlank() } ?: return null
+        val deviceId = envelope.optString("deviceId").takeIf { it.isNotBlank() } ?: return null
+        val targetIndex = playlistIndex ?: envelope.optInt("activeIndex", 0)
+        val items = envelope.optJSONArray("items") ?: return null
+        var item: JSONObject? = null
+
+        for (i in 0 until items.length()) {
+            val candidate = items.optJSONObject(i) ?: continue
+            if (candidate.optInt("index", i) == targetIndex) {
+                item = candidate
+                break
+            }
+        }
+
+        if (item == null && items.length() > 0) item = items.optJSONObject(0)
+        val contextItem = item ?: return null
+
+        fun optionalString(name: String): String? = contextItem.optString(name)
+            .takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+
+        fun optionalLong(name: String): Long? = if (contextItem.has(name) && !contextItem.isNull(name)) {
+            contextItem.optLong(name).takeIf { it > 0L }
+        } else null
+
+        fun optionalInt(name: String): Int? = if (contextItem.has(name) && !contextItem.isNull(name)) {
+            contextItem.optInt(name)
+        } else null
+
         val cleanUri = stripDddMetadata(uri)?.toString()
 
         return DddSyncContext(
-            remoteEventsUrl = remoteEventsUrl,
-            remoteLatestUrl = params["ddd_remote_latest_url"],
-            schema = params["ddd_remote_schema"]?.toIntOrNull() ?: 1,
+            remoteEventsUrl = eventsUrl,
+            remoteLatestUrl = envelope.optString("latestUrl").takeIf { it.isNotBlank() },
+            schema = envelope.optInt("schema", 1),
             deviceId = deviceId,
-            sessionId = params["ddd_sid"] ?: params["bridge_session_id"],
-            contentKey = params["ddd_content_key"],
-            sourceKey = params["ddd_source_key"],
-            timelineHash = params["ddd_timeline_hash"],
-            sourceKind = params["ddd_source_kind"],
+            sessionId = envelope.optString("sessionId").takeIf { it.isNotBlank() },
+            contentKey = optionalString("contentKey"),
+            sourceKey = optionalString("sourceKey"),
+            timelineHash = optionalString("timelineHash"),
+            sourceKind = optionalString("sourceKind"),
             uri = cleanUri,
-            title = params["ddd_title"] ?: title,
-            filename = params["ddd_filename"] ?: filename,
-            lampaPositionMs = params["ddd_lampa_position"]?.toLongOrNull(),
-            lampaDurationMs = params["ddd_lampa_duration"]?.toLongOrNull(),
-            lampaPercent = params["ddd_lampa_percent"]?.toIntOrNull(),
-            lampaAudioTrack = params["ddd_audio_track"],
-            lampaAudioTrackId = params["ddd_audio_track_id"],
-            lampaAudioTrackIndex = params["ddd_audio_track_index"]?.toIntOrNull(),
-            lampaAudioTrackLanguage = params["ddd_audio_track_language"],
-            lampaAudioTrackMimeType = params["ddd_audio_track_mime"],
-            lampaAudioTrackChannelCount = params["ddd_audio_track_channels"]?.toIntOrNull()
+            title = optionalString("title") ?: title,
+            filename = optionalString("filename") ?: filename,
+            lampaPositionMs = optionalLong("positionMs"),
+            lampaDurationMs = optionalLong("durationMs"),
+            lampaPercent = optionalInt("percent"),
+            lampaAudioTrack = optionalString("audioTrack"),
+            lampaAudioTrackId = optionalString("audioTrackId"),
+            lampaAudioTrackIndex = optionalInt("audioTrackIndex"),
+            lampaAudioTrackLanguage = optionalString("audioTrackLanguage"),
+            lampaAudioTrackMimeType = optionalString("audioTrackMime"),
+            lampaAudioTrackChannelCount = optionalInt("audioTrackChannels")
         ).takeIf { it.enabled }
     }
 
@@ -301,7 +407,7 @@ object IntentUtils {
         for (i in 0 until headersArray.size - 1 step 2) {
             val key = headersArray[i]
             val value = headersArray[i + 1]
-            if (key.isNotBlank()) result[key] = value
+            if (key.isNotBlank() && !key.equals(DDD_SYNC_HEADER, ignoreCase = true)) result[key] = value
         }
         return result
     }
