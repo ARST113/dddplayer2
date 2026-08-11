@@ -84,6 +84,10 @@ android {
         }
     }
     buildTypes {
+        debug {
+            applicationIdSuffix = ".codex"
+            versionNameSuffix = "-codex"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

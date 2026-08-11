@@ -50,6 +50,9 @@ class DddSyncRemoteClient(
     private fun buildBody(event: BridgeEvent, context: DddSyncContext): JsonObject? {
         val payload = payloadFromEvent(event) ?: return null
 
+        context.playlistIndex?.let { payload.addProperty("windowIndex", it) }
+        context.playlistSize?.let { payload.addProperty("playlistSize", it) }
+
         return JsonObject().apply {
             addProperty("schema", context.schema)
             addProperty("deviceId", context.deviceId)

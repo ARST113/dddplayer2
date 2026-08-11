@@ -6,6 +6,8 @@ data class DddSyncContext(
     val schema: Int = 1,
     val deviceId: String,
     val sessionId: String? = null,
+    val playlistIndex: Int? = null,
+    val playlistSize: Int? = null,
     val contentKey: String? = null,
     val sourceKey: String? = null,
     val timelineHash: String? = null,
