@@ -175,6 +175,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var pendingSeekReason: String? = null
     private var mediaTransitionGeneration = 0L
     private var previousSnapshotForTransition: PlaybackSnapshot? = null
+    private var flushedOutgoingSnapshotTs: Long? = null
     private val finalSessionFinishedSent = AtomicBoolean(false)
     private val EVENT_FLUSH_MIN_INTERVAL_MS = 500L
     private val EVENT_FLUSH_MIN_POSITION_DELTA_MS = 1_000L
@@ -701,6 +702,63 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         Log.d("DDDPlayer/DddSync", "queued type=${event::class.simpleName} contentKey=${target.contentKey} sourceKey=${target.sourceKey}")
     }
 
+    private fun captureOutgoingPlaylistSnapshot(reason: String): PlaybackSnapshot {
+        val snapshot = capturePlaybackSnapshot(reason)
+        val index = snapshot.windowIndex ?: playerManager.getCurrentWindowIndex()
+        val item = _currentPlaylist.value?.getOrNull(index)
+        val launchPosition = item?.startPositionMs ?: 0L
+        val launchDuration = item?.dddSyncContext?.lampaDurationMs ?: 0L
+        val currentPosition = snapshot.position ?: 0L
+        val currentDuration = snapshot.duration ?: 0L
+
+        return snapshot.copy(
+            position = if (currentPosition <= 0L && launchPosition > 0L) launchPosition else snapshot.position,
+            duration = if (currentDuration <= 0L && launchDuration > 0L) launchDuration else snapshot.duration,
+            reason = reason
+        )
+    }
+
+    private fun flushOutgoingPlaylistItem(reason: String) {
+        saveCurrentSettings()
+
+        val snapshot = captureOutgoingPlaylistSnapshot(reason)
+        rememberPlaylistPosition(snapshot)
+        previousSnapshotForTransition = snapshot
+        lastKnownSnapshot = snapshot
+
+        val event = snapshot.toPositionTick(reason)
+        if (bridgeConfig.enabled && bridgeConfig.emitPosition) bridgeDispatcher?.emit(event)
+        sendDddSyncEvent(event, getCurrentDddSyncContext(snapshot.windowIndex))
+        flushedOutgoingSnapshotTs = snapshot.ts
+
+        Log.i(
+            TAG,
+            "Outgoing playlist checkpoint reason=$reason index=${snapshot.windowIndex} position=${snapshot.position} uri=${snapshot.uri}"
+        )
+    }
+
+    private fun rememberPlaylistPosition(snapshot: PlaybackSnapshot) {
+        val index = snapshot.windowIndex ?: return
+        val position = snapshot.position?.coerceAtLeast(0L) ?: return
+        val playlist = _currentPlaylist.value ?: return
+        val item = playlist.getOrNull(index) ?: return
+        val duration = snapshot.duration?.takeIf { it > 0L }
+            ?: item.dddSyncContext?.lampaDurationMs
+
+        val updatedContext = item.dddSyncContext?.copy(
+            lampaPositionMs = position,
+            lampaDurationMs = duration
+        )
+        val updated = playlist.toMutableList()
+        updated[index] = item.copy(
+            startPositionMs = position,
+            dddSyncContext = updatedContext
+        )
+        _currentPlaylist.value = updated
+
+        Log.i(TAG, "Remember playlist position index=$index position=$position duration=$duration")
+    }
+
     private fun eventWindowIndex(event: BridgeEvent): Int? = when (event) {
         is BridgeEvent.SessionStarted -> event.startIndex
         is BridgeEvent.PositionTick -> event.windowIndex
@@ -853,10 +911,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         override fun onMediaItemTransition(mediaItem: Media3MediaItem?, reason: Int) {
             ioRetryCount = 0 // Сброс счетчика при смене видео
             previousSnapshotForTransition?.let {
-                if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
-                    bridgeDispatcher?.emit(it.toPositionTick("before_playlist_item_changed"))
+                val incomingUri = mediaItem?.localConfiguration?.uri?.toString()
+                val incomingIndex = player?.currentMediaItemIndex
+                val isOutgoing = it.uri != incomingUri || it.windowIndex != incomingIndex
+
+                if (isOutgoing && it.ts != flushedOutgoingSnapshotTs) {
+                    val event = it.toPositionTick("before_playlist_item_changed")
+                    if (bridgeConfig.enabled && bridgeConfig.emitPosition) {
+                        bridgeDispatcher?.emit(event)
+                    }
+                    sendDddSyncEvent(event, getCurrentDddSyncContext(it.windowIndex))
                 }
             }
+            flushedOutgoingSnapshotTs = null
             handleMediaItemTransition(mediaItem)
             refreshCurrentPlaylistUiState("media_item_transition")
             val p = player
@@ -1712,9 +1779,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setPlaybackActive(active: Boolean) { if (active) playerManager.play() else playerManager.pause() }
     fun nextTrack() {
         if (playerManager.hasNext()) {
-            saveCurrentSettings()
+            flushOutgoingPlaylistItem("before_manual_next")
             pendingSeekReason = "manual_next"
-            playerManager.next()
+            val target = playerManager.getCurrentWindowIndex() + 1
+            val startPosition = _currentPlaylist.value?.getOrNull(target)?.startPositionMs ?: 0L
+            playerManager.playIndex(target, startPosition)
             refreshCurrentPlaylistUiState("manual_next")
             restartTorrentPiecesPollingForCurrentItem("manual_next")
             startNativeProbeForCurrentItem("manual_next")
@@ -1723,9 +1792,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun prevTrack() {
         if (playerManager.hasPrevious()) {
-            saveCurrentSettings()
+            flushOutgoingPlaylistItem("before_manual_previous")
             pendingSeekReason = "manual_previous"
-            playerManager.previous()
+            val target = playerManager.getCurrentWindowIndex() - 1
+            val startPosition = _currentPlaylist.value?.getOrNull(target)?.startPositionMs ?: 0L
+            playerManager.playIndex(target, startPosition)
             refreshCurrentPlaylistUiState("manual_previous")
             restartTorrentPiecesPollingForCurrentItem("manual_previous")
             startNativeProbeForCurrentItem("manual_previous")
@@ -1822,10 +1893,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         currentUri = uri
 
+        val currentIndex = playerManager.getCurrentWindowIndex()
+        val currentItem = _currentPlaylist.value?.getOrNull(currentIndex)
+        val launchPosition = currentItem?.startPositionMs ?: 0L
+        val measuredPosition = playerManager.getPositionMs().coerceAtLeast(0L)
         val positionToSave = if (p?.isCurrentMediaItemLive == true) {
             0L
+        } else if (
+            measuredPosition <= 0L &&
+            launchPosition > 0L &&
+            playerManager.getPlaybackStateCompat() != Player.STATE_READY
+        ) {
+            launchPosition
         } else {
-            playerManager.getPositionMs().coerceAtLeast(0L)
+            measuredPosition
         }
         // Получаем ID текущих дорожек
         val audioId = _currentAudioTrack.value?.format?.id
@@ -1836,7 +1917,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             uri = uri,
             lastUpdated = System.currentTimeMillis(),
             lastPosition = positionToSave,
-            duration = normalizeDuration(playerManager.getDurationMs())?.coerceAtLeast(0L) ?: 0L,
+            duration = (
+                normalizeDuration(playerManager.getDurationMs())
+                    ?: currentItem?.dddSyncContext?.lampaDurationMs
+                    ?: 0L
+            ).coerceAtLeast(0L),
             audioTrackId = audioId,
             subtitleTrackId = subId
         )
@@ -1979,9 +2064,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * Гарантирует сброс ошибок и включение видео.
      */
     fun playPlaylistItem(index: Int) {
-        saveCurrentSettings()
+        flushOutgoingPlaylistItem("before_playlist_item_click")
         _videoDisabledError.value = null
-        playerManager.playIndex(index, 0L)
+        val startPosition = _currentPlaylist.value?.getOrNull(index)?.startPositionMs ?: 0L
+        playerManager.playIndex(index, startPosition)
         refreshCurrentPlaylistUiState("playlist_item_click")
         restartTorrentPiecesPollingForCurrentItem("playlist_item_click")
         startNativeProbeForCurrentItem("playlist_item_click")

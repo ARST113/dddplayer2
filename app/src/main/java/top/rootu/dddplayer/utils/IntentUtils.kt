@@ -209,7 +209,7 @@ object IntentUtils {
                     ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
                     ?: 0L
             } else {
-                0L
+                syncContext?.lampaPositionMs?.takeIf { it > 0L } ?: 0L
             }
 
             playlist.add(
@@ -287,6 +287,8 @@ object IntentUtils {
                 schema = params["ddd_remote_schema"]?.toIntOrNull() ?: 1,
                 deviceId = deviceId,
                 sessionId = params["ddd_sid"] ?: params["bridge_session_id"],
+                playlistIndex = params["ddd_i"]?.toIntOrNull() ?: playlistIndex,
+                playlistSize = params["ddd_playlist_size"]?.toIntOrNull(),
                 contentKey = params["ddd_content_key"],
                 sourceKey = params["ddd_source_key"],
                 timelineHash = params["ddd_timeline_hash"],
@@ -381,6 +383,11 @@ object IntentUtils {
             schema = envelope.optInt("schema", 1),
             deviceId = deviceId,
             sessionId = envelope.optString("sessionId").takeIf { it.isNotBlank() },
+            playlistIndex = contextItem.optInt("index", targetIndex),
+            playlistSize = (0 until items.length())
+                .mapNotNull { index -> items.optJSONObject(index)?.optInt("index", index) }
+                .maxOrNull()
+                ?.plus(1),
             contentKey = optionalString("contentKey"),
             sourceKey = optionalString("sourceKey"),
             timelineHash = optionalString("timelineHash"),
