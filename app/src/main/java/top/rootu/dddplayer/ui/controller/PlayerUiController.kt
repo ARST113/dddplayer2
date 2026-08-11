@@ -1,6 +1,7 @@
 package top.rootu.dddplayer.ui.controller
 
 import android.app.Dialog
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
@@ -67,6 +68,9 @@ class PlayerUiController(private val rootView: View) {
     val controlsView: View = rootView.findViewById(R.id.playback_controls)
     val topInfoPanel: View = rootView.findViewById(R.id.top_info_panel)
     val topSettingsPanel: View = rootView.findViewById(R.id.top_settings_panel)
+    val centerPlayPauseButton: ImageButton = rootView.findViewById(R.id.center_play_pause)
+    private val hasTouchscreen =
+        rootView.resources.configuration.touchscreen != Configuration.TOUCHSCREEN_NOTOUCH
 
     // Info Panel
     val videoTitleTextView: TextView = topInfoPanel.findViewById(R.id.video_title)
@@ -533,6 +537,7 @@ class PlayerUiController(private val rootView: View) {
     fun showControls(focusOnSeekBar: Boolean = false) {
         controlsView.visibility = View.VISIBLE
         topInfoPanel.visibility = View.VISIBLE
+        centerPlayPauseButton.visibility = if (hasTouchscreen) View.VISIBLE else View.GONE
         updateClockVisibility() // Скрываем одиночные часы, т.к. показана панель
 
         if (focusOnSeekBar) seekBar.requestFocus() else playPauseButton.requestFocus()
@@ -541,6 +546,7 @@ class PlayerUiController(private val rootView: View) {
     fun hideControls() {
         controlsView.visibility = View.GONE
         topInfoPanel.visibility = View.GONE
+        centerPlayPauseButton.visibility = View.GONE
         optionsRecycler.visibility = View.GONE
         updateClockVisibility() // Показываем одиночные часы, если они разрешены
 

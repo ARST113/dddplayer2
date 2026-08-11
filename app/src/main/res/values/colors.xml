@@ -32,6 +32,8 @@
     <color name="control_halo">#50FFFFFF</color>
     <color name="control_state_default">#10FFFFFF</color>
     <color name="control_accent_focus">#30FFFFFF</color>
+    <color name="center_control_background">#78000000</color>
+    <color name="center_control_stroke">#40FFFFFF</color>
 
     <!-- === ПРОГРЕСС === -->
     <color name="progress_track">#20FFFFFF</color>

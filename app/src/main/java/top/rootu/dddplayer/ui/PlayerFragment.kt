@@ -514,6 +514,12 @@ class PlayerFragment : Fragment() {
             viewModel.emitUserAction("play_pause_click")
             viewModel.togglePlayPause()
         }
+        ui.centerPlayPauseButton.setOnClickListener {
+            resetDimTimer()
+            viewModel.emitUserAction("center_play_pause_click")
+            viewModel.togglePlayPause()
+            timerController.resetControlsTimer()
+        }
         ui.rewindButton.setOnClickListener {
             viewModel.emitUserAction("rewind_click")
             viewModel.seekBack()
@@ -928,7 +934,9 @@ class PlayerFragment : Fragment() {
                     ui.hideError()
                 }
             }
-            ui.playPauseButton.setImageResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play_arrow)
+            val icon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play_arrow
+            ui.playPauseButton.setImageResource(icon)
+            ui.centerPlayPauseButton.setImageResource(icon)
 
             // Сбрасываем таймер затемнения при снятии/постановке на паузу
             resetDimTimer()

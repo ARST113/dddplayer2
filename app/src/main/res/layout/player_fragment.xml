@@ -431,6 +431,25 @@
         android:visibility="gone"
         tools:visibility="visible"/>
 
+    <!-- Touch-only play/pause control. It follows the timeline panel visibility,
+         but stays out of the TV focus chain. -->
+    <ImageButton
+        android:id="@+id/center_play_pause"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_center_play_pause"
+        android:clickable="true"
+        android:contentDescription="Play/Pause"
+        android:focusable="false"
+        android:padding="15dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_pause"
+        android:visibility="gone"
+        app:tint="@color/tv_white"
+        tools:ignore="HardcodedText"
+        tools:visibility="visible" />
+
     <!-- Индикатор буферизации (Одиночный) -->
     <FrameLayout
         android:id="@+id/buffering_container"
