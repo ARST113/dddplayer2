@@ -13,8 +13,19 @@ data class MediaItem(
     val subtitles: List<SubtitleItem> = emptyList(),
     val startPositionMs: Long = 0,
     val dddSyncContext: DddSyncContext? = null,
+    val pidtor: PidTorTransport? = null,
     // Уникальный ID для DiffUtil, генерируется автоматически при создании объекта
     val uuid: String = UUID.randomUUID().toString()
+)
+
+data class PidTorTransport(
+    val manifestUrl: String,
+    val schema: Int = 1,
+    val qualityKey: String? = null,
+    val audioKey: String? = null,
+    val subtitleKey: String? = null,
+    val season: Int = 0,
+    val episode: Int = 0
 )
 
 data class SubtitleItem(

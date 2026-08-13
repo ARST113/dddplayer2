@@ -87,7 +87,7 @@ object TrackLogic {
                 }
             }
         }
-        return Pair(audioList, selectedAudioIdx)
+        return deduplicateTracks(audioList, selectedAudioIdx)
     }
 
     fun extractSubtitleTracks(
@@ -128,7 +128,27 @@ object TrackLogic {
                 }
             }
         }
-        return Pair(subList, selectedSubIdx)
+        return deduplicateTracks(subList, selectedSubIdx)
+    }
+
+    private fun deduplicateTracks(options: List<TrackOption>, selectedIndex: Int): Pair<List<TrackOption>, Int> {
+        if (options.size <= 2) return Pair(options, selectedIndex)
+
+        val selected = options.getOrNull(selectedIndex)
+        val seen = mutableSetOf<String>()
+        val deduplicated = options.filter { option ->
+            if (option.isOff) return@filter true
+            val format = option.format
+            val title = (option.nameFromMeta ?: format?.label ?: "")
+                .lowercase()
+                .replace(Regex("[^\\p{L}\\p{N}]+"), "")
+            val language = format?.language?.lowercase().orEmpty()
+            seen.add("$title|$language")
+        }
+        val newSelected = deduplicated.indexOfFirst { option ->
+            option === selected || option.format?.id == selected?.format?.id
+        }.takeIf { it >= 0 } ?: 0
+        return Pair(deduplicated, newSelected)
     }
 
     fun buildTrackLabel(option: TrackOption, context: Context): String {

@@ -693,7 +693,7 @@ class PlayerFragment : Fragment() {
             if (selected == null) {
                 showMainMenu("audio")
             } else {
-                viewModel.selectTrackByIndex(C.TRACK_TYPE_AUDIO, selected.id.toInt())
+                viewModel.selectAudioMenuItem(selected.id)
                 sideMenuDialog?.dismiss()
             }
         }
@@ -712,7 +712,7 @@ class PlayerFragment : Fragment() {
             if (selected == null) {
                 showMainMenu("subtitles")
             } else {
-                viewModel.selectTrackByIndex(C.TRACK_TYPE_TEXT, selected.id.toInt())
+                viewModel.selectSubtitleMenuItem(selected.id)
                 sideMenuDialog?.dismiss()
             }
         }

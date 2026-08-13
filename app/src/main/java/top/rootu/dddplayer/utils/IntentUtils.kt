@@ -14,6 +14,7 @@ import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeMode
 import top.rootu.dddplayer.bridge.DddSyncContext
 import top.rootu.dddplayer.model.MediaItem
+import top.rootu.dddplayer.model.PidTorTransport
 import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
@@ -145,6 +146,7 @@ object IntentUtils {
         }
 
         val syncContext = parseDddSyncContext(rawUri, title, filename, extras)
+        val pidtor = parsePidTorTransport(rawUri)
         val startPosition = getLongExtraCompat(extras, "position", 0L)
             .takeIf { it > 0L }
             ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
@@ -162,7 +164,8 @@ object IntentUtils {
             headers = parseHeaders(extras),
             subtitles = singleSubs,
             startPositionMs = startPosition,
-            dddSyncContext = syncContext
+            dddSyncContext = syncContext,
+            pidtor = pidtor
         )
 
         return Pair(listOf(item), 0)
@@ -194,6 +197,7 @@ object IntentUtils {
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
             if (title.isNullOrEmpty()) title = uri.lastPathSegment
             val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i), extras, i)
+            val pidtor = parsePidTorTransport(rawUri)
 
             val itemSubs = if (playlistSubsBundles != null && i < playlistSubsBundles.size) {
                 parseSubtitles(playlistSubsBundles[i], "uris", "names")
@@ -221,7 +225,8 @@ object IntentUtils {
                     headers = headersMap,
                     subtitles = itemSubs,
                     startPositionMs = pos,
-                    dddSyncContext = syncContext
+                    dddSyncContext = syncContext,
+                    pidtor = pidtor
                 )
             )
         }
@@ -309,6 +314,20 @@ object IntentUtils {
         }
 
         return parseNativeSyncContext(extras, uri, title, filename, playlistIndex)
+    }
+
+    private fun parsePidTorTransport(uri: Uri?): PidTorTransport? {
+        val params = parseDddParams(uri)
+        val manifestUrl = params["ddd_pidtor_manifest_url"]?.takeIf { it.isNotBlank() } ?: return null
+        return PidTorTransport(
+            manifestUrl = manifestUrl,
+            schema = params["ddd_pidtor_manifest_schema"]?.toIntOrNull() ?: 1,
+            qualityKey = params["ddd_pidtor_quality_key"]?.takeIf { it.isNotBlank() },
+            audioKey = params["ddd_pidtor_audio_key"]?.takeIf { it.isNotBlank() },
+            subtitleKey = params["ddd_pidtor_subtitle_key"]?.takeIf { it.isNotBlank() },
+            season = params["ddd_pidtor_season"]?.toIntOrNull() ?: 0,
+            episode = params["ddd_pidtor_episode"]?.toIntOrNull() ?: 0
+        )
     }
 
     private fun nativeSyncEnvelope(extras: Bundle?): JSONObject? {

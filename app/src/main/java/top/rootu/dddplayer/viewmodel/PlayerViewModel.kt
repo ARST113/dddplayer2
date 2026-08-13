@@ -48,6 +48,9 @@ import top.rootu.dddplayer.data.torrserver.TorrServerStreamContextParser
 import top.rootu.dddplayer.logic.SettingsMutator
 import top.rootu.dddplayer.logic.TrackLogic
 import top.rootu.dddplayer.model.MediaItem
+import top.rootu.dddplayer.pidtor.PidTorManifestClient
+import top.rootu.dddplayer.pidtor.PidTorManifest
+import top.rootu.dddplayer.pidtor.PidTorTrackChoice
 import top.rootu.dddplayer.model.MenuItem
 import top.rootu.dddplayer.model.PlaybackSpeed
 import top.rootu.dddplayer.model.ResizeMode
@@ -148,7 +151,8 @@ data class VideoQualityOption(
     val bitrate: Int,
     val group: Tracks.Group?,
     val trackIndex: Int,
-    val isAuto: Boolean = false
+    val isAuto: Boolean = false,
+    val externalKey: String? = null
 )
 
 @UnstableApi
@@ -315,6 +319,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .writeTimeout(5, TimeUnit.SECONDS)
             .build()
     )
+    private val pidtorManifestClient = PidTorManifestClient()
+    private var pidtorManifestJob: Job? = null
+    private var pidtorManifestUrl: String? = null
+    private var pidtorManifest: PidTorManifest? = null
+    private var pidtorAudioChoices = listOf<PidTorTrackChoice>()
+    private var pidtorSubtitleChoices = listOf<PidTorTrackChoice>()
+    private var pendingPidtorAudio: PidTorTrackChoice? = null
+    private var pendingPidtorSubtitle: PidTorTrackChoice? = null
     private var torrentPiecesJob: Job? = null
     private var torrentStreamContext: TorrServerStreamContext? = null
     private val nativeProbeGeneration = AtomicLong(0L)
@@ -1017,8 +1029,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
                 if (playerManager.usesBackendTrackApi()) {
                     refreshCurrentAudioTrackUiState()
-                    restoreBackendAudioPreferenceIfNeeded("backend_playing")
                     refreshCurrentSubtitleTrackUiState()
+                    if (!applyPendingPidTorTracks()) {
+                        restoreBackendAudioPreferenceIfNeeded("backend_playing")
+                    }
                 }
                 val d = playerManager.getDurationMs().takeIf { it > 0 } ?: 0L
                 _duration.postValue(d)
@@ -1224,6 +1238,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         pendingAudioId = null
         pendingSubtitleId = null
 
+        applyPendingPidTorTracks()
+
         player?.let { p ->
             val generation = ++mediaTransitionGeneration
             val uriForSettings = mediaItem?.localConfiguration?.uri?.toString()
@@ -1237,6 +1253,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _hasNext.value = p.hasNextMediaItem()
             _playlistSize.value = p.mediaItemCount
             _currentWindowIndex.value = p.currentMediaItemIndex
+            loadPidTorManifest(currentPlaylistItem(), "media_item_transition")
 
             isSettingsLoadedFromDb = false
 
@@ -1572,9 +1589,60 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         pendingSubtitleId = null
 
         // 3. Видео (Quality)
-        _videoQualityOptions.postValue(TrackLogic.extractVideoTracks(tracks))
+        if (currentPlaylistItem()?.pidtor == null) {
+            _videoQualityOptions.postValue(TrackLogic.extractVideoTracks(tracks))
+        }
 
         updateAvailableSettings()
+    }
+
+    private fun applyPendingPidTorTracks(): Boolean {
+        var applied = false
+        pendingPidtorAudio?.let { choice ->
+            var audioApplied = false
+            if (playerManager.usesBackendTrackApi()) {
+                val tracks = playerManager.getBackendAudioTracks()
+                val target = tracks.firstOrNull { it.id == choice.streamIndex }
+                    ?: tracks.firstOrNull { normalizeTrackName(it.label) == normalizeTrackName(choice.label) }
+                    ?: tracks.firstOrNull { normalizeTrackName(it.language) == normalizeTrackName(choice.language) }
+                if (target != null && playerManager.selectBackendAudioTrackById(target.id)) audioApplied = true
+            } else {
+                val index = audioOptions.indexOfFirst { option ->
+                    normalizeTrackName(option.nameFromMeta ?: option.format?.label) == normalizeTrackName(choice.label) ||
+                        normalizeTrackName(option.format?.language) == normalizeTrackName(choice.language)
+                }
+                if (index >= 0) {
+                    selectTrackByIndex(C.TRACK_TYPE_AUDIO, index, persist = false, reason = "pidtor_manifest")
+                    audioApplied = true
+                }
+            }
+            if (audioApplied) {
+                applied = true
+                pendingPidtorAudio = null
+            }
+        }
+        pendingPidtorSubtitle?.let { choice ->
+            var subtitleApplied = false
+            if (playerManager.usesBackendTrackApi()) {
+                val tracks = playerManager.getBackendSubtitleTracks()
+                val target = tracks.firstOrNull { it.id == choice.streamIndex }
+                    ?: tracks.firstOrNull { normalizeTrackName(it.label) == normalizeTrackName(choice.label) }
+                if (target != null && playerManager.selectBackendSubtitleTrackById(target.id)) subtitleApplied = true
+            } else {
+                val index = subtitleOptions.indexOfFirst { option ->
+                    normalizeTrackName(option.nameFromMeta ?: option.format?.label) == normalizeTrackName(choice.label)
+                }
+                if (index >= 0) {
+                    selectTrackByIndex(C.TRACK_TYPE_TEXT, index, persist = false, reason = "pidtor_manifest")
+                    subtitleApplied = true
+                }
+            }
+            if (subtitleApplied) {
+                applied = true
+                pendingPidtorSubtitle = null
+            }
+        }
+        return applied
     }
 
     // --- Player Controls ---
@@ -1837,6 +1905,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val startPos = startPosMs ?: items.getOrNull(startIndex)?.startPositionMs ?: 0L
         applyLaunchAudioPreference(items.getOrNull(startIndex)?.dddSyncContext)
         playerManager.loadPlaylist(items, startIndex, startPos)
+        loadPidTorManifest(items.getOrNull(startIndex), "load_playlist")
         startTorrentPiecesPolling(items.getOrNull(startIndex)?.uri?.toString())
         startNativeProbe(items.getOrNull(startIndex), "load_playlist")
         sendDddSyncSessionStarted(items.getOrNull(startIndex), items.size, startIndex, startPos)
@@ -2095,6 +2164,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getAudioTrackMenuItems(context: Context): List<MenuItem> {
+        if (pidtorAudioChoices.isNotEmpty() && currentPlaylistItem()?.pidtor != null) {
+            val selected = currentPlaylistItem()?.pidtor?.audioKey
+            return pidtorAudioChoices.map { choice ->
+                MenuItem("pidtor-a:${choice.key}", choice.label, isSelected = choice.key == selected)
+            }
+        }
         if (playerManager.usesBackendTrackApi()) {
             val selected = playerManager.getBackendSelectedAudioTrackId()
             return playerManager.getBackendAudioTracks().mapIndexed { index, track ->
@@ -2111,6 +2186,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getSubtitleMenuItems(context: Context): List<MenuItem> {
+        if (currentPlaylistItem()?.pidtor != null && pidtorSubtitleChoices.isNotEmpty()) {
+            val selected = currentPlaylistItem()?.pidtor?.subtitleKey
+            return listOf(MenuItem("pidtor-s:off", context.getString(R.string.track_off), isSelected = selected.isNullOrBlank())) +
+                pidtorSubtitleChoices.map { choice ->
+                    MenuItem("pidtor-s:${choice.key}", choice.label, isSelected = choice.key == selected)
+                }
+        }
         if (playerManager.usesBackendTrackApi()) {
             val selected = playerManager.getBackendSelectedSubtitleTrackId()
             return playerManager.getBackendSubtitleTracks().mapIndexed { index, track ->
@@ -2543,6 +2625,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setVideoQuality(option: VideoQualityOption) {
+        val externalKey = option.externalKey
+        if (externalKey != null) {
+            switchPidTorQuality(externalKey)
+            return
+        }
         player?.let { p ->
             val builder = p.trackSelectionParameters.buildUpon()
             if (option.isAuto) {
@@ -2556,6 +2643,178 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             p.trackSelectionParameters = builder.build()
             _currentQualityName.value = option.name
+        }
+    }
+
+    fun selectAudioMenuItem(id: String) {
+        if (id.startsWith("pidtor-a:")) {
+            switchPidTorSelection(audioKey = id.removePrefix("pidtor-a:"))
+        } else {
+            id.toIntOrNull()?.let { selectTrackByIndex(C.TRACK_TYPE_AUDIO, it) }
+        }
+    }
+
+    fun selectSubtitleMenuItem(id: String) {
+        if (id == "pidtor-s:off") {
+            pendingPidtorSubtitle = null
+            if (playerManager.usesBackendTrackApi()) {
+                playerManager.getBackendSubtitleTracks().firstOrNull { it.id < 0 || it.label.equals("off", true) }
+                    ?.let { playerManager.selectBackendSubtitleTrackById(it.id) }
+            } else {
+                selectTrackByIndex(C.TRACK_TYPE_TEXT, 0)
+            }
+            val currentIndex = playerManager.getCurrentWindowIndex()
+            val playlist = _currentPlaylist.value.orEmpty()
+            if (currentIndex in playlist.indices) {
+                val updated = playlist.toMutableList()
+                updated[currentIndex] = updated[currentIndex].copy(pidtor = updated[currentIndex].pidtor?.copy(subtitleKey = null))
+                _currentPlaylist.value = updated
+            }
+        } else if (id.startsWith("pidtor-s:")) {
+            switchPidTorSelection(subtitleKey = id.removePrefix("pidtor-s:"))
+        } else {
+            id.toIntOrNull()?.let { selectTrackByIndex(C.TRACK_TYPE_TEXT, it) }
+        }
+    }
+
+    private fun loadPidTorManifest(item: MediaItem?, reason: String) {
+        val transport = item?.pidtor
+        if (transport == null) {
+            pidtorManifestUrl = null
+            pidtorManifest = null
+            pidtorAudioChoices = emptyList()
+            pidtorSubtitleChoices = emptyList()
+            return
+        }
+        if (pidtorManifestUrl == transport.manifestUrl && _videoQualityOptions.value?.any { it.externalKey != null } == true) {
+            _currentQualityName.postValue(transport.qualityKey ?: _currentQualityName.value ?: "Auto")
+            updatePidTorTrackChoices(transport.qualityKey ?: _currentQualityName.value ?: "")
+            preparePidTorTrackSelection(transport.audioKey, transport.subtitleKey)
+            return
+        }
+
+        pidtorManifestUrl = transport.manifestUrl
+        pidtorManifestJob?.cancel()
+        pidtorManifestJob = viewModelScope.launch {
+            runCatching { pidtorManifestClient.load(transport.manifestUrl) }
+                .onSuccess { manifest ->
+                    if (pidtorManifestUrl != transport.manifestUrl) return@onSuccess
+                    pidtorManifest = manifest
+                    val qualities = pidtorManifestClient.qualityOptions(manifest).map { quality ->
+                        VideoQualityOption(
+                            name = quality.label,
+                            width = quality.width,
+                            height = quality.height,
+                            bitrate = quality.bitrate,
+                            group = null,
+                            trackIndex = -1,
+                            externalKey = quality.key
+                        )
+                    }
+                    _videoQualityOptions.postValue(qualities)
+                    val selectedQuality = transport.qualityKey ?: qualities.firstOrNull()?.name ?: "Auto"
+                    _currentQualityName.postValue(selectedQuality)
+                    updatePidTorTrackChoices(selectedQuality)
+                    preparePidTorTrackSelection(transport.audioKey, transport.subtitleKey)
+                    Log.i("DDDPlayer/PidTor", "manifest loaded reason=$reason qualities=${qualities.map { it.name }}")
+                }
+                .onFailure { error ->
+                    Log.w("DDDPlayer/PidTor", "manifest failed reason=$reason url=${transport.manifestUrl}", error)
+                }
+        }
+    }
+
+    private fun updatePidTorTrackChoices(qualityKey: String) {
+        val manifest = pidtorManifest ?: return
+        if (qualityKey.isBlank() || qualityKey == "Auto") return
+        pidtorAudioChoices = pidtorManifestClient.audioOptions(manifest, qualityKey)
+        pidtorSubtitleChoices = pidtorManifestClient.subtitleOptions(manifest, qualityKey)
+        Log.i("DDDPlayer/PidTor", "tracks quality=$qualityKey audio=${pidtorAudioChoices.map { it.label }} subs=${pidtorSubtitleChoices.map { it.label }}")
+    }
+
+    private fun preparePidTorTrackSelection(audioKey: String?, subtitleKey: String?) {
+        pendingPidtorAudio = pidtorAudioChoices.firstOrNull { it.key == audioKey }
+            ?: pidtorAudioChoices.filter { it.language == "ru" }.maxByOrNull { it.seeders }
+            ?: pidtorAudioChoices.maxByOrNull { it.seeders }
+        pendingPidtorSubtitle = subtitleKey?.let { key ->
+            pidtorSubtitleChoices.firstOrNull { it.key == key }
+        }
+        applyPendingPidTorTracks()
+    }
+
+    private fun switchPidTorQuality(qualityKey: String) {
+        val currentIndex = playerManager.getCurrentWindowIndex()
+        val playlist = _currentPlaylist.value ?: return
+        val current = playlist.getOrNull(currentIndex) ?: return
+        val transport = current.pidtor ?: return
+        pidtorManifestJob?.cancel()
+        pidtorManifestJob = viewModelScope.launch {
+            _isBuffering.postValue(true)
+            runCatching {
+                val manifest = pidtorManifestClient.load(transport.manifestUrl)
+                pidtorManifestClient.resolveQuality(
+                    transport.manifestUrl,
+                    manifest,
+                    qualityKey,
+                    playlist,
+                    transport.audioKey,
+                    transport.subtitleKey
+                )
+            }.onSuccess { selection ->
+                val updated = selection.playlist
+                if (updated.isEmpty()) return@onSuccess
+                flushOutgoingPlaylistItem("before_pidtor_quality_change")
+                val position = playerManager.getPositionMs().coerceAtLeast(0L)
+                pendingPidtorAudio = selection.audio
+                pendingPidtorSubtitle = selection.subtitle
+                _currentPlaylist.value = updated
+                playerManager.loadPlaylist(updated, currentIndex.coerceIn(0, updated.lastIndex), position)
+                _currentQualityName.value = qualityKey
+                updatePidTorTrackChoices(qualityKey)
+                restartTorrentPiecesPollingForCurrentItem("pidtor_quality_change")
+                startNativeProbeForCurrentItem("pidtor_quality_change")
+                Log.i("DDDPlayer/PidTor", "quality switched key=$qualityKey index=$currentIndex position=$position")
+            }.onFailure { error ->
+                _toastMessage.postValue(error.message ?: "PidTor quality unavailable")
+                Log.e("DDDPlayer/PidTor", "quality switch failed key=$qualityKey", error)
+            }
+            _isBuffering.postValue(false)
+        }
+    }
+
+    private fun switchPidTorSelection(audioKey: String? = null, subtitleKey: String? = null) {
+        val currentIndex = playerManager.getCurrentWindowIndex()
+        val playlist = _currentPlaylist.value ?: return
+        val current = playlist.getOrNull(currentIndex) ?: return
+        val transport = current.pidtor ?: return
+        val qualityKey = transport.qualityKey ?: _currentQualityName.value ?: return
+        pidtorManifestJob?.cancel()
+        pidtorManifestJob = viewModelScope.launch {
+            _isBuffering.postValue(true)
+            runCatching {
+                val manifest = pidtorManifest ?: pidtorManifestClient.load(transport.manifestUrl).also { pidtorManifest = it }
+                pidtorManifestClient.resolveQuality(
+                    transport.manifestUrl,
+                    manifest,
+                    qualityKey,
+                    playlist,
+                    audioKey ?: transport.audioKey,
+                    if (subtitleKey != null) subtitleKey.takeIf { it.isNotBlank() } else transport.subtitleKey
+                )
+            }.onSuccess { selection ->
+                flushOutgoingPlaylistItem("before_pidtor_track_change")
+                val position = playerManager.getPositionMs().coerceAtLeast(0L)
+                pendingPidtorAudio = selection.audio
+                pendingPidtorSubtitle = selection.subtitle
+                _currentPlaylist.value = selection.playlist
+                playerManager.loadPlaylist(selection.playlist, currentIndex.coerceIn(0, selection.playlist.lastIndex), position)
+                restartTorrentPiecesPollingForCurrentItem("pidtor_track_change")
+                startNativeProbeForCurrentItem("pidtor_track_change")
+            }.onFailure { error ->
+                _toastMessage.postValue(error.message ?: "PidTor track unavailable")
+                Log.e("DDDPlayer/PidTor", "track switch failed audio=$audioKey subtitle=$subtitleKey", error)
+            }
+            _isBuffering.postValue(false)
         }
     }
 
@@ -2618,6 +2877,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         stopTorrentPiecesPolling()
+        pidtorManifestJob?.cancel()
         handler.removeCallbacks(progressUpdater)
         playerManager.releasePlayer(isFinalRelease = true, saveState = false)
     }
