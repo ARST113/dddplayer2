@@ -26,5 +26,6 @@ interface PlaybackBackend {
     fun isPlaying(): Boolean
     fun getBufferedPositionMs(): Long
     fun getBufferedPercentage(): Int
+    fun setPlaybackSpeed(speed: Float) {}
     fun setListener(listener: Listener?)
 }

@@ -14,7 +14,8 @@ import top.rootu.dddplayer.model.SubtitleItem
 
 class VlcBackend(
     context: Context,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val forceSoftwareVideoDecode: Boolean = false
 ) : PlaybackBackend {
     private val appContext = context.applicationContext
     private var listener: PlaybackBackend.Listener? = null
@@ -63,10 +64,18 @@ class VlcBackend(
             "--network-caching=${settingsRepository.getVlcNetworkCachingMs()}",
             "--file-caching=${settingsRepository.getVlcFileCachingMs()}"
         )
-        when (settingsRepository.getVlcHardwareAccelerationMode()) {
-            SettingsRepository.VLC_HW_DISABLED -> options += "--avcodec-hw=none"
-            SettingsRepository.VLC_HW_DECODING -> options += "--avcodec-hw=mediacodec_ndk"
-            SettingsRepository.VLC_HW_FULL -> options += "--avcodec-hw=any"
+        if (forceSoftwareVideoDecode) {
+            // MediaCodec may accept an unsupported HEVC profile (for example
+            // Main 4:4:4 10-bit) and then produce only a black surface. A decoder
+            // failure from the native backend must therefore bypass hardware in
+            // VLC as well instead of retrying the same broken codec path.
+            options += "--avcodec-hw=none"
+        } else {
+            when (settingsRepository.getVlcHardwareAccelerationMode()) {
+                SettingsRepository.VLC_HW_DISABLED -> options += "--avcodec-hw=none"
+                SettingsRepository.VLC_HW_DECODING -> options += "--avcodec-hw=mediacodec_ndk"
+                SettingsRepository.VLC_HW_FULL -> options += "--avcodec-hw=any"
+            }
         }
         pendingStartPositionMs = startPositionMs
         libVlc = LibVLC(appContext, options)
@@ -160,6 +169,7 @@ class VlcBackend(
     override fun isPlaying(): Boolean = mediaPlayer?.isPlaying == true
     override fun getBufferedPositionMs(): Long = getPositionMs()
     override fun getBufferedPercentage(): Int = if (isPlaying()) 100 else if (isCurrentlyBuffering) lastBufferingPercent else lastBufferingPercent
+    override fun setPlaybackSpeed(speed: Float) { mediaPlayer?.rate = speed }
     override fun setListener(listener: PlaybackBackend.Listener?) { this.listener = listener }
 
     private fun notifyCurrentVideoSize(reason: String) {

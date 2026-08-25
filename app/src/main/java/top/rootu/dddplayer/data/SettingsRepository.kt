@@ -20,6 +20,7 @@ class SettingsRepository private constructor(context: Context) {
         const val RESUME_NEVER = 2
 
         const val PLAYBACK_ENGINE_AUTO = "AUTO"
+        const val PLAYBACK_ENGINE_NATIVE_ONLY = "NATIVE_ONLY"
         const val PLAYBACK_ENGINE_MEDIA3_ONLY = "MEDIA3_ONLY"
         const val PLAYBACK_ENGINE_VLC_ONLY = "VLC_ONLY"
         const val PLAYBACK_ENGINE_VLC_FALLBACK = "VLC_FALLBACK"
@@ -160,7 +161,7 @@ class SettingsRepository private constructor(context: Context) {
     fun getHardSettingsSignature(): String {
         val videoParams = "${getDecoderPriority()}_${isTunnelingEnabled()}_${isMapDvToHevcEnabled()}"
         val audioDownmix = "${isStereoDownmixEnabled()}_${getMixPreset()}}_${getMixFront()}_${getMixCenter()}_${getMixRear()}_${getMixMiddle()}_${getMixLfe()}"
-        return "${videoParams}_${audioDownmix}"
+        return "${getPlaybackEngine()}_${videoParams}_${audioDownmix}"
     }
 
     // --- Global Preferences Helpers ---
@@ -185,8 +186,8 @@ class SettingsRepository private constructor(context: Context) {
     }
 
 
-    fun getPlaybackEngine(): String = prefs.getString("playback_engine", PLAYBACK_ENGINE_AUTO) ?: PLAYBACK_ENGINE_AUTO
-    fun setPlaybackEngine(value: String) = prefs.edit { putString("playback_engine", value) }
+    fun getPlaybackEngine(): String = PLAYBACK_ENGINE_NATIVE_ONLY
+    fun setPlaybackEngine(value: String) = prefs.edit { putString("playback_engine", PLAYBACK_ENGINE_NATIVE_ONLY) }
     fun isFallbackOnVideoDecoderErrorEnabled(): Boolean = prefs.getBoolean("fallback_on_video_decoder_error", true)
     fun setFallbackOnVideoDecoderErrorEnabled(enabled: Boolean) = prefs.edit { putBoolean("fallback_on_video_decoder_error", enabled) }
     fun getVlcHardwareAccelerationMode(): String = prefs.getString("vlc_hardware_acceleration", VLC_HW_AUTO) ?: VLC_HW_AUTO

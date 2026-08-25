@@ -761,7 +761,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 isUserInteracting = false
                 _isBuffering.postValue(false)
                 android.util.Log.i("DDDPlayer/Backend", "ViewModel backend playing -> hide loading spinner")
-                if (playerManager.getActiveBackendId() == "VLC") {
+                if (usesBackendTrackApi()) {
                     refreshCurrentAudioTrackUiState()
                     restoreVlcAudioPreferenceIfNeeded("backend_playing")
                     refreshCurrentSubtitleTrackUiState()
@@ -783,13 +783,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         val safeDuration = if (durationMs > 0) {
                 lastNonZeroDurationMs = durationMs
                 durationMs
-            } else if (playerManager.getActiveBackendId() == "VLC" && lastNonZeroDurationMs > 0) {
+            } else if (usesBackendTrackApi() && lastNonZeroDurationMs > 0) {
                 lastNonZeroDurationMs
             } else 0L
             _duration.postValue(safeDuration)
         }
         playerManager.onBackendVideoSizeChanged = { width, height, pixelWidthHeightRatio ->
-            handleVideoGeometryChanged(width, height, pixelWidthHeightRatio, "VLC")
+            handleVideoGeometryChanged(width, height, pixelWidthHeightRatio,
+                playerManager.getActiveBackendId())
         }
         playerManager.onBackendEnded = {
             saveCurrentSettings()
@@ -799,7 +800,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         playerManager.onBackendError = { err ->
             saveCurrentSettings()
             flushProgress(reason = "error", final = true)
-            _fatalError.postValue(err as? PlaybackException ?: PlaybackException(err.message ?: "VLC backend error", err, PlaybackException.ERROR_CODE_UNSPECIFIED))
+            _fatalError.postValue(err as? PlaybackException ?: PlaybackException(
+                err.message ?: "Playback backend error",
+                err,
+                PlaybackException.ERROR_CODE_UNSPECIFIED
+            ))
             _isPlaying.postValue(false)
         }
 
@@ -1336,6 +1341,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun isBackendPlaying(): Boolean = playerManager.isPlaying()
 
     fun getActiveBackendId(): String = playerManager.getActiveBackendId()
+    private fun usesBackendTrackApi(): Boolean = getActiveBackendId() == "VLC" ||
+            getActiveBackendId() == "NATIVE"
     fun getVlcAudioTracksForUi(): List<BackendAudioTrack> = playerManager.getVlcAudioTracks()
     fun getVlcSelectedAudioTrackIdForUi(): Int? = playerManager.getVlcSelectedAudioTrackId()
     fun getVlcSubtitleTracksForUi(): List<BackendSubtitleTrack> = playerManager.getVlcSubtitleTracks()
@@ -1372,7 +1379,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun refreshCurrentAudioTrackUiState() {
-        if (playerManager.getActiveBackendId() != "VLC") return
+        if (!usesBackendTrackApi()) return
         val tracks = playerManager.getVlcAudioTracks()
         val selectedId = playerManager.getVlcSelectedAudioTrackId()
         val selectedTrack = tracks.firstOrNull { it.id == selectedId } ?: tracks.firstOrNull { it.selected } ?: tracks.firstOrNull()
@@ -1384,7 +1391,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun refreshCurrentSubtitleTrackUiState() {
-        if (playerManager.getActiveBackendId() != "VLC") return
+        if (!usesBackendTrackApi()) return
         val tracks = playerManager.getVlcSubtitleTracks()
         val selectedId = playerManager.getVlcSelectedSubtitleTrackId()
         val selectedTrack = tracks.firstOrNull { it.id == selectedId } ?: tracks.firstOrNull { it.selected } ?: tracks.firstOrNull()
@@ -1531,7 +1538,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setPlaybackSpeed(speed: PlaybackSpeed) {
         _playbackSpeed.value = speed
-        player?.setPlaybackSpeed(speed.value)
+        playerManager.setPlaybackSpeed(speed.value)
     }
 
     fun setResizeMode(mode: ResizeMode) {
@@ -1803,7 +1810,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getAudioTrackMenuItems(context: Context): List<MenuItem> {
-        if (playerManager.getActiveBackendId() == "VLC") {
+        if (usesBackendTrackApi()) {
             val selected = playerManager.getVlcSelectedAudioTrackId()
             return playerManager.getVlcAudioTracks().mapIndexed { index, track ->
                 val label = TrackLogic.compactTrackLabel(
@@ -1819,7 +1826,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getSubtitleMenuItems(context: Context): List<MenuItem> {
-        if (playerManager.getActiveBackendId() == "VLC") {
+        if (usesBackendTrackApi()) {
             val selected = playerManager.getVlcSelectedSubtitleTrackId()
             return playerManager.getVlcSubtitleTracks().mapIndexed { index, track ->
                 val label = TrackLogic.buildTrackLabel(buildVlcSubtitleTrackOption(track, index), context)
@@ -1845,7 +1852,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun selectTrackByIndex(trackType: Int, index: Int, persist: Boolean = true, reason: String = "user_selected", matchScore: Int? = null) {
         val options = if (trackType == C.TRACK_TYPE_AUDIO) audioOptions else subtitleOptions
 
-        if (playerManager.getActiveBackendId() == "VLC") {
+        if (usesBackendTrackApi()) {
             if (trackType == C.TRACK_TYPE_AUDIO) {
                 val list = playerManager.getVlcAudioTracks()
                 val selectedBefore = playerManager.getVlcSelectedAudioTrackId()
@@ -2112,7 +2119,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun restoreVlcAudioPreferenceIfNeeded(reason: String) {
-        if (playerManager.getActiveBackendId() != "VLC") return
+        if (!usesBackendTrackApi()) return
         if (!hasExplicitSessionAudioPreference) return
         val preference = sessionAudioPreference ?: return
         val tracks = playerManager.getVlcAudioTracks()
@@ -2173,7 +2180,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun changeSettingValue(settingType: SettingType, direction: Int) {
         when (settingType) {
             SettingType.AUDIO_TRACK -> {
-                if (playerManager.getActiveBackendId() == "VLC") {
+                if (usesBackendTrackApi()) {
                     val tracks = playerManager.getVlcAudioTracks()
                     val selectedBefore = playerManager.getVlcSelectedAudioTrackId()
                     android.util.Log.i("DDDPlayer/VLC", "audio_cycle backend=${playerManager.getActiveBackendId()} tracks=${tracks.mapIndexed { idx, t -> "$idx:${t.id}:${t.label}" }} selectedBefore=$selectedBefore direction=$direction")
@@ -2208,7 +2215,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun getOptionsForSetting(type: SettingType, context: Context): Pair<List<String>, Int>? {
         return when (type) {
             SettingType.AUDIO_TRACK -> {
-                if (playerManager.getActiveBackendId() == "VLC") {
+                if (usesBackendTrackApi()) {
                     val tracks = playerManager.getVlcAudioTracks()
                     val selectedId = playerManager.getVlcSelectedAudioTrackId()
                     val labels = tracks.mapIndexed { index, track ->
@@ -2228,7 +2235,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 Pair(list, idx.coerceAtLeast(0))
             }
             SettingType.SUBTITLES -> {
-                if (playerManager.getActiveBackendId() == "VLC") {
+                if (usesBackendTrackApi()) {
                     val tracks = playerManager.getVlcSubtitleTracks()
                     val selectedId = playerManager.getVlcSelectedSubtitleTrackId()
                     val labels = tracks.mapIndexed { index, track ->

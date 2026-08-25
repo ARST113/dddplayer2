@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.provider.OpenableColumns
 import androidx.core.net.toUri
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import top.rootu.dddplayer.bridge.BridgeConfig
 import top.rootu.dddplayer.bridge.BridgeMode
 import top.rootu.dddplayer.bridge.DddSyncContext
@@ -16,10 +18,35 @@ import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
+    /**
+     * Lampa duplicates DDD bridge metadata in both the query and fragment so that
+     * different external players can consume it.  Those parameters belong to the
+     * player integration, not to the media endpoint: forwarding them to strict
+     * endpoints such as PiTor makes an otherwise valid URL return HTTP 400.
+     */
+    private fun cleanPlaybackUri(uri: Uri?): Uri? {
+        if (uri == null) return null
+        val cleanEncodedQuery = uri.encodedQuery
+            ?.split("&")
+            ?.filterNot { part ->
+                val encodedKey = part.substringBefore("=")
+                Uri.decode(encodedKey).startsWith("ddd_", ignoreCase = true)
+            }
+            ?.joinToString("&")
+            ?.takeIf { it.isNotEmpty() }
+
+        return uri.buildUpon()
+            .encodedQuery(cleanEncodedQuery)
+            .fragment(null)
+            .build()
+    }
+
     private fun normalizePlaybackUri(uri: Uri?): String {
-        if (uri == null) return ""
-        val clean = uri.buildUpon().fragment(null).build()
-        return clean.toString().replace("%20", " ").trim()
+        return cleanPlaybackUri(uri)
+            ?.toString()
+            ?.replace("%20", " ")
+            ?.trim()
+            .orEmpty()
     }
 
     private fun getQueryParamSafe(uri: Uri?, key: String): String? = try {
@@ -56,6 +83,11 @@ object IntentUtils {
     fun parseIntent(context: Context, intent: Intent): Pair<List<MediaItem>, Int> {
         val dataUri = intent.data
         val extras = intent.extras ?: Bundle.EMPTY
+
+        // Lampa's DDD integration sends the complete serial playlist as an
+        // URL-encoded JSON control header.  Consume it before the generic
+        // ACTION_VIEW path; the header itself must never reach the media host.
+        parseLampaDddPlaylist(extras, dataUri)?.let { return it }
 
         // 1. Проверяем, есть ли специфичный список воспроизведения (внутренний формат)
         val videoListUris = getParcelableArrayCompat(extras, "video_list")
@@ -104,7 +136,7 @@ object IntentUtils {
 
     private fun parseSingleFile(context: Context, intent: Intent): Pair<List<MediaItem>, Int> {
         val rawUri = intent.data ?: return Pair(emptyList(), 0)
-        val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: return Pair(emptyList(), 0)
+        val uri = cleanPlaybackUri(rawUri) ?: return Pair(emptyList(), 0)
         val extras = intent.extras ?: Bundle.EMPTY
 
         // Пытаемся найти заголовок в Extras (некоторые приложения передают его)
@@ -126,13 +158,13 @@ object IntentUtils {
         val singlePoster = extras.getString("thumbnail")
         // Single Video Subtitles
         val singleSubs = parseSubtitles(extras, "subs")
-
+        val headers = parseHeaders(extras)
         val item = MediaItem(
             uri = uri,
             title = title,
             filename = filename,
             posterUri = singlePoster?.toUri(),
-            headers = parseHeaders(extras),
+            headers = headers,
             subtitles = singleSubs,
             startPositionMs = startPosition,
             dddSyncContext = syncContext
@@ -141,12 +173,92 @@ object IntentUtils {
         return Pair(listOf(item), 0)
     }
 
+    private fun parseLampaDddPlaylist(
+        extras: Bundle,
+        dataUri: Uri?
+    ): Pair<List<MediaItem>, Int>? {
+        val headerPayload = getSmartStringArray(extras, "headers")
+            ?.asList()
+            ?.chunked(2)
+            ?.firstOrNull { pair ->
+                pair.size == 2 && pair[0].equals("X-Lampa-DDD-Sync", ignoreCase = true)
+            }
+            ?.getOrNull(1)
+            ?: return null
+
+        val root = try {
+            JsonParser.parseString(Uri.decode(headerPayload)).asJsonObject
+        } catch (_: Throwable) {
+            return null
+        }
+        val eventsUrl = root.stringOrNull("eventsUrl") ?: return null
+        val deviceId = root.stringOrNull("deviceId") ?: return null
+        val items = root.getAsJsonArray("items") ?: return null
+        if (items.size() <= 1) return null
+
+        val headers = parseHeaders(extras)
+        val poster = parseFragmentParams(dataUri?.fragment)["ddd_poster"]
+        val indexedItems = items.mapNotNull { element ->
+            val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val sourceKey = item.stringOrNull("sourceKey") ?: return@mapNotNull null
+            val uri = cleanPlaybackUri(sourceKey.toUri()) ?: return@mapNotNull null
+            val index = item.intOrNull("index") ?: return@mapNotNull null
+            val title = item.stringOrNull("title") ?: item.stringOrNull("filename") ?: "Video"
+            val filename = item.stringOrNull("filename")
+            val syncContext = DddSyncContext(
+                remoteEventsUrl = eventsUrl,
+                remoteLatestUrl = root.stringOrNull("latestUrl"),
+                schema = root.intOrNull("schema") ?: 1,
+                deviceId = deviceId,
+                sessionId = root.stringOrNull("sessionId"),
+                contentKey = item.stringOrNull("contentKey"),
+                sourceKey = sourceKey,
+                timelineHash = item.stringOrNull("timelineHash"),
+                sourceKind = item.stringOrNull("sourceKind"),
+                uri = uri.toString(),
+                title = title,
+                filename = filename,
+                lampaPositionMs = item.longOrNull("positionMs"),
+                lampaDurationMs = item.longOrNull("durationMs"),
+                lampaPercent = item.intOrNull("percent"),
+                lampaAudioTrack = item.stringOrNull("audioTrack"),
+                lampaAudioTrackId = item.stringOrNull("audioTrackId"),
+                lampaAudioTrackLanguage = item.stringOrNull("audioTrackLanguage"),
+                lampaAudioTrackMimeType = item.stringOrNull("audioTrackMime")
+            )
+            index to MediaItem(
+                uri = uri,
+                title = title,
+                filename = filename,
+                posterUri = poster?.takeIf { it.isNotBlank() }?.toUri(),
+                headers = headers,
+                startPositionMs = item.longOrNull("positionMs")?.coerceAtLeast(0L) ?: 0L,
+                dddSyncContext = syncContext
+            )
+        }.sortedBy { it.first }
+        if (indexedItems.isEmpty()) return null
+
+        val activeIndex = root.intOrNull("activeIndex")
+        val playlist = indexedItems.map { it.second }
+        val startIndex = indexedItems
+            .indexOfFirst { it.first == activeIndex }
+            .takeIf { it >= 0 }
+            ?: playlist.indexOfFirst { samePlaybackItem(it.uri, dataUri) }
+                .takeIf { it >= 0 }
+            ?: 0
+        android.util.Log.i(
+            "DDDPlayer/Intent",
+            "parseLampaDddPlaylist activeIndex=$activeIndex finalStartIndex=$startIndex playlistSize=${playlist.size}"
+        )
+        return playlist to startIndex
+    }
+
     private fun parseInternalPlaylist(
         extras: Bundle,
         videoListUris: Array<Parcelable>,
         dataUri: Uri?
     ): Pair<List<MediaItem>, Int> {
-        val cleanDataUri = dataUri?.buildUpon()?.fragment(null)?.build()
+        val cleanDataUri = cleanPlaybackUri(dataUri)
         val names = getSmartStringArray(extras, "video_list.name")
         val filenames = getSmartStringArray(extras, "video_list.filename")
         val posters = getSmartStringArray(extras, "video_list.thumbnail")
@@ -160,7 +272,7 @@ object IntentUtils {
 
         for (i in videoListUris.indices) {
             val rawUri = ((videoListUris[i] as? Uri) ?: (videoListUris[i] as? String)?.toUri()) ?: continue
-            val uri = rawUri.buildUpon()?.fragment(null)?.build() ?: continue
+            val uri = cleanPlaybackUri(rawUri) ?: continue
 
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
@@ -227,7 +339,7 @@ object IntentUtils {
         val params = parseFragmentParams(uri?.fragment)
         val remoteEventsUrl = params["ddd_remote_events_url"] ?: return null
         val deviceId = params["ddd_device_id"] ?: return null
-        val cleanUri = uri?.buildUpon()?.fragment(null)?.build()?.toString()
+        val cleanUri = cleanPlaybackUri(uri)?.toString()
 
         return DddSyncContext(
             remoteEventsUrl = remoteEventsUrl,
@@ -261,9 +373,31 @@ object IntentUtils {
         for (i in 0 until headersArray.size - 1 step 2) {
             val key = headersArray[i]
             val value = headersArray[i + 1]
-            if (key.isNotBlank()) result[key] = value
+            // This header is a Lampa → player control channel.  Forwarding it
+            // through redirects to the actual media server makes strict nginx /
+            // TorrServer endpoints reject the request with HTTP 400.
+            val isInternalDddHeader = key.startsWith("X-Lampa-DDD-", ignoreCase = true)
+            if (key.isNotBlank() && !isInternalDddHeader) result[key] = value
         }
         return result
+    }
+
+    private fun JsonObject.stringOrNull(key: String): String? = try {
+        get(key)?.takeUnless { it.isJsonNull }?.asString
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun JsonObject.intOrNull(key: String): Int? = try {
+        get(key)?.takeUnless { it.isJsonNull }?.asInt
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun JsonObject.longOrNull(key: String): Long? = try {
+        get(key)?.takeUnless { it.isJsonNull }?.asLong
+    } catch (_: Throwable) {
+        null
     }
 
     private fun getLongExtraCompat(bundle: Bundle, key: String, defaultValue: Long = 0L): Long {

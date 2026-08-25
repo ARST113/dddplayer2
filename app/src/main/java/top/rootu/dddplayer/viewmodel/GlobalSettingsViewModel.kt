@@ -141,15 +141,8 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
 
 
     fun cyclePlaybackEngine() {
-        val current = _playbackEngine.value ?: SettingsRepository.PLAYBACK_ENGINE_AUTO
-        val next = when (current) {
-            SettingsRepository.PLAYBACK_ENGINE_AUTO -> SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY
-            SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK
-            SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY
-            else -> SettingsRepository.PLAYBACK_ENGINE_AUTO
-        }
-        repository.setPlaybackEngine(next)
-        _playbackEngine.value = next
+        repository.setPlaybackEngine(SettingsRepository.PLAYBACK_ENGINE_NATIVE_ONLY)
+        _playbackEngine.value = SettingsRepository.PLAYBACK_ENGINE_NATIVE_ONLY
     }
 
     fun toggleFallbackOnDecoderError(enabled: Boolean) {
@@ -357,12 +350,7 @@ class GlobalSettingsViewModel(application: Application) : AndroidViewModel(appli
     }
 
 
-    fun getPlaybackEngineLabel(value: String): Int = when (value) {
-        SettingsRepository.PLAYBACK_ENGINE_MEDIA3_ONLY -> R.string.pref_playback_engine_media3
-        SettingsRepository.PLAYBACK_ENGINE_VLC_FALLBACK -> R.string.pref_playback_engine_vlc_fallback
-        SettingsRepository.PLAYBACK_ENGINE_VLC_ONLY -> R.string.pref_playback_engine_vlc_only
-        else -> R.string.pref_playback_engine_auto
-    }
+    fun getPlaybackEngineLabel(value: String): Int = R.string.pref_playback_engine_native
 
     fun getVlcHardwareAccelerationLabel(value: String): Int = when (value) {
         SettingsRepository.VLC_HW_DISABLED -> R.string.pref_vlc_hw_disabled

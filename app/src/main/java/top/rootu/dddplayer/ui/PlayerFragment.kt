@@ -479,8 +479,15 @@ class PlayerFragment : Fragment() {
 
         // Кнопки плеера
         ui.playPauseButton.setOnClickListener {
+            resetDimTimer()
             viewModel.emitUserAction("play_pause_click")
             viewModel.togglePlayPause()
+        }
+        ui.centerPlayPauseButton.setOnClickListener {
+            resetDimTimer()
+            viewModel.emitUserAction("center_play_pause_click")
+            viewModel.togglePlayPause()
+            timerController.resetControlsTimer()
         }
         ui.rewindButton.setOnClickListener {
             viewModel.emitUserAction("rewind_click")
@@ -645,8 +652,8 @@ class PlayerFragment : Fragment() {
     private fun showAudioTrackMenu() {
         val menuItems = viewModel.getAudioTrackMenuItems(requireContext())
         if (menuItems.isEmpty()) return
-        // -1, потому что первый элемент - "Off"
-        val trackCount = (menuItems.size - 1).coerceAtLeast(0)
+        // Audio has no synthetic "Off" entry (unlike subtitles).
+        val trackCount = menuItems.size
 
         showSideMenu(
             getString(R.string.menu_audio_title, trackCount),
@@ -896,7 +903,9 @@ class PlayerFragment : Fragment() {
                     ui.hideError()
                 }
             }
-            ui.playPauseButton.setImageResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play_arrow)
+            val icon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play_arrow
+            ui.playPauseButton.setImageResource(icon)
+            ui.centerPlayPauseButton.setImageResource(icon)
 
             // Сбрасываем таймер затемнения при снятии/постановке на паузу
             resetDimTimer()

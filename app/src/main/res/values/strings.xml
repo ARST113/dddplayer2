@@ -209,6 +209,7 @@
 
     <string name="pref_playback_engine">Playback engine</string>
     <string name="pref_playback_engine_auto">Auto</string>
+    <string name="pref_playback_engine_native">DDD Unified</string>
     <string name="pref_playback_engine_media3">Media3</string>
     <string name="pref_playback_engine_vlc_fallback">VLC fallback</string>
     <string name="pref_playback_engine_vlc_only">VLC only</string>

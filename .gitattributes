@@ -1,0 +1,9 @@
+*.sh text eol=lf
+gradlew text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+native/patches/*.patch text eol=lf -whitespace
+
+*.so binary
+*.aar binary
+*.apk binary

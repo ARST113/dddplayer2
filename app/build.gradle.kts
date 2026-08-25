@@ -33,6 +33,7 @@ val gitVersionName: String by lazy {
 
 val versionNameOverride = providers.gradleProperty("versionNameOverride").orNull
 val versionCodeOverride = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
+val applicationIdSuffixOverride = providers.gradleProperty("applicationIdSuffixOverride").orNull
 
 plugins {
     alias(libs.plugins.android.application)
@@ -40,9 +41,46 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// ── Единый нативный движок (native/ddd_engine, UNIFIED-ENGINE.md) ──
+//
+// Каталог native/ входит в репозиторий. FFmpeg при обычной Gradle-сборке не
+// пересобирается: проверенные arm64-библиотеки лежат в native/prebuilt, а полный
+// исходный код подключён pinned-сабмодулем для воспроизводимости и лицензии.
+val nativeRoot = rootProject.file("native")
+val ffmpegAbis = listOf("arm64-v8a")
+
+/**
+ * FFmpeg собирается отдельным скриптом, поэтому его .so надо принести в APK как
+ * готовые библиотеки. Ожидаемая Gradle раскладка jniLibs — `<dir>/<abi>/<имя>.so`, а
+ * сборочный скрипт кладёт их в `<abi>/stripped/`, поэтому нужна перекладка.
+ *
+ * Sync, а не Copy: при удалении библиотеки из сборки FFmpeg она должна исчезнуть
+ * и из APK. Иначе в APK годами живёт .so, которую уже никто не собирает, — и
+ * отладка «почему подхватилась старая версия» стоит дороже этой задачи.
+ */
+val syncFfmpegLibs = tasks.register<Sync>("syncFfmpegLibs") {
+    description = "Раскладывает libav*_ddd.so из native/prebuilt/ffmpeg в вид jniLibs"
+    into(layout.buildDirectory.dir("ffmpegJniLibs"))
+    ffmpegAbis.forEach { abi ->
+        val stripped = File(nativeRoot, "prebuilt/ffmpeg/$abi/stripped")
+        val full = File(nativeRoot, "prebuilt/ffmpeg/$abi/lib")
+        // Стрипнутые в APK: полные весят в разы больше, а символы нужны только
+        // ndk-stack на хосте, где они и остаются.
+        from(if (stripped.isDirectory) stripped else full) {
+            include("*.so")
+            into(abi)
+        }
+    }
+}
+
 android {
     namespace = "top.rootu.dddplayer"
     compileSdk = 36
+
+    // Та же версия, на которой собран FFmpeg (native/scripts/build-ffmpeg.sh) и
+    // нативный тест шага 3. Разные NDK — разные libc++, и ошибка вылезает не при
+    // сборке, а падением в рантайме на чужом std::string.
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "top.rootu.dddplayer"
@@ -54,6 +92,45 @@ android {
         println("Building Version: $versionName ($versionCode)")
 
         vectorDrawables.useSupportLibrary = true
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // Только arm64: FFmpeg собран под неё, и других целей у проекта нет —
+            // Pico 4 и современные Android-TV приставки все arm64. Каждая лишняя
+            // ABI — это ещё ~12 МБ библиотек FFmpeg в APK.
+            abiFilters += ffmpegAbis
+        }
+
+        externalNativeBuild {
+            cmake {
+                // c++_shared, а не c++_static: libc++ в процессе должна быть одна.
+                // При static её копия попадёт и в libddd_engine.so, и в чужие .so
+                // (VLC), а два разных аллокатора в одном процессе — это падения на
+                // передаче std::string через границу библиотек.
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    // Some Windows/Ninja combinations can leave CMake's tiny
+                    // compiler-probe executable linker waiting forever. The
+                    // engine is a library, so a static-library probe validates
+                    // the compiler just as well and avoids that irrelevant link.
+                    "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+                )
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = File(nativeRoot, "ddd_engine/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(layout.buildDirectory.dir("ffmpegJniLibs"))
+        }
     }
 
     buildFeatures {
@@ -73,6 +150,11 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            // Позволяет поставить тестовую сборку рядом с Play/GitHub-релизом,
+            // подписанным другим ключом, не удаляя приложение и его данные.
+            applicationIdSuffixOverride?.let { applicationIdSuffix = it }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -90,7 +172,21 @@ android {
         disable.add("MissingTranslation")
         disable.add("UnsafeOptInUsageError")
     }
+
+    packaging {
+        jniLibs {
+            // Библиотеки FFmpeg уже стрипнуты сборочным скриптом; повторный
+            // strip средствами AGP на них только тратит время сборки.
+            keepDebugSymbols += "*/*/libav*_ddd.so"
+            keepDebugSymbols += "*/*/libsw*_ddd.so"
+        }
+    }
 }
+
+// jniLibs надо разложить до того, как AGP начнёт собирать APK, иначе первая
+// сборка после чистого клона уходит без библиотек FFmpeg — и падает не здесь, а
+// в рантайме на System.loadLibrary.
+tasks.named("preBuild") { dependsOn(syncFfmpegLibs) }
 
 kotlin {
     compilerOptions {
@@ -123,7 +219,10 @@ dependencies {
     implementation(libs.media3.exoplayer.smoothstreaming)
     implementation(libs.media3.exoplayer.rtsp)
 
-    implementation("org.videolan.android:libvlc-all:3.6.0-eap14")
+    // 3.7.5 is the first stable line we use whose arm64 ELF segments are all
+    // 16 KiB aligned. Older 3.6.0-eap14 puts an Android 16 compatibility dialog
+    // over PlayerActivity before playback can become visible.
+    implementation("org.videolan.android:libvlc-all:3.7.5")
     // Локальные AAR (Декодеры audio и AV1)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
@@ -141,5 +240,6 @@ dependencies {
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.espresso.core)
 }

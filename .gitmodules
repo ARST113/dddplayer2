@@ -1,0 +1,6 @@
+[submodule "native/ffmpeg-src"]
+	path = native/ffmpeg-src
+	url = https://github.com/FFmpeg/FFmpeg.git
+[submodule "native/libxml2-src"]
+	path = native/libxml2-src
+	url = https://github.com/GNOME/libxml2.git

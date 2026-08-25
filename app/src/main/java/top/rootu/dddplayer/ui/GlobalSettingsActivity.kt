@@ -222,11 +222,12 @@ class GlobalSettingsActivity : AppCompatActivity() {
 
         // Decoder
         itemDecoder.setOnClickListener { settingsViewModel.toggleDecoderPriority() }
-        itemPlaybackEngine.setOnClickListener { settingsViewModel.cyclePlaybackEngine() }
-        itemFallbackDecoderError.setOnClickListener { settingsViewModel.toggleFallbackOnDecoderError(!switchFallbackDecoderError.isChecked) }
-        itemVlcHwAccel.setOnClickListener { settingsViewModel.cycleVlcHardwareAccelerationMode() }
-        itemVlcNetworkCache.setOnClickListener { settingsViewModel.cycleVlcNetworkCachingMs() }
-        itemVlcFileCache.setOnClickListener { settingsViewModel.cycleVlcFileCachingMs() }
+        itemPlaybackEngine.isClickable = false
+        itemPlaybackEngine.isFocusable = false
+        itemFallbackDecoderError.visibility = View.GONE
+        itemVlcHwAccel.visibility = View.GONE
+        itemVlcNetworkCache.visibility = View.GONE
+        itemVlcFileCache.visibility = View.GONE
 
         // Downmix
         itemDownmix.setOnClickListener {

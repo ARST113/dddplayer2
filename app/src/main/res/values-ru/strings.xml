@@ -211,6 +211,7 @@
 
     <string name="pref_playback_engine">Движок воспроизведения</string>
     <string name="pref_playback_engine_auto">Авто</string>
+    <string name="pref_playback_engine_native">Единый DDD</string>
     <string name="pref_playback_engine_media3">Media3</string>
     <string name="pref_playback_engine_vlc_fallback">VLC fallback</string>
     <string name="pref_playback_engine_vlc_only">Только VLC</string>

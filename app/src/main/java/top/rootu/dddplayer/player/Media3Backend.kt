@@ -46,5 +46,6 @@ class Media3Backend(private val exoPlayer: ExoPlayer) : PlaybackBackend {
     override fun isPlaying(): Boolean = exoPlayer.isPlaying
     override fun getBufferedPositionMs(): Long = exoPlayer.bufferedPosition
     override fun getBufferedPercentage(): Int = exoPlayer.bufferedPercentage
+    override fun setPlaybackSpeed(speed: Float) = exoPlayer.setPlaybackSpeed(speed)
     override fun setListener(listener: PlaybackBackend.Listener?) { this.listener = listener }
 }

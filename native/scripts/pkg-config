@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# Минимальный pkg-config для кросс-сборки: в системе его нет вообще, а configure
+# FFmpeg умеет находить libxml2 / dav1d / libbluray только через него
+# (`require_pkg_config`). Подставляется в FFmpeg через `--pkg-config=<этот файл>`.
+#
+# Реализовано ровно то, что вызывает configure FFmpeg:
+#   --exists --print-errors <mod>   --cflags <mod>   --libs <mod>
+#   --modversion <mod>              --atleast-version=X <mod>
+# Плюс Requires/Requires.private раскрываются рекурсивно, а Libs.private
+# добавляется всегда: зависимости у нас статические, значит их -l нужны на линковке
+# FFmpeg-библиотеки.
+#
+# Модули ищутся в PKG_CONFIG_PATH (разделитель ':').
+
+set -u
+
+declare -a MODS=()
+want_cflags=0 want_libs=0 want_version=0 atleast=""
+
+for a in "$@"; do
+    case "$a" in
+        --cflags|--cflags-only-I|--cflags-only-other) want_cflags=1 ;;
+        --libs|--libs-only-L|--libs-only-l|--libs-only-other) want_libs=1 ;;
+        --modversion)          want_version=1 ;;
+        --atleast-version=*)   atleast="${a#*=}" ;;
+        --version)             echo "0.29.2 (ddd shim)"; exit 0 ;;
+        --exists|--print-errors|--silence-errors|--short-errors|--static|--errors-to-stdout) ;;
+        -*)                    ;;
+        *)                     MODS+=("$a") ;;
+    esac
+done
+
+[ ${#MODS[@]} -gt 0 ] || { echo "pkg-config(shim): не задан модуль" >&2; exit 1; }
+
+pc_path() {
+    local m="$1" d
+    local IFS=:
+    for d in ${PKG_CONFIG_PATH:-}; do
+        [ -f "$d/$m.pc" ] && { printf '%s\n' "$d/$m.pc"; return 0; }
+    done
+    return 1
+}
+
+# pc_field <файл> <Поле> — значение поля с раскрытыми ${переменными}
+pc_field() {
+    local file="$1" field="$2"
+    awk -v want="$field" '
+        /^[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*=/ {
+            k = $0; sub(/[[:space:]]*=.*/, "", k)
+            v = $0; sub(/^[^=]*=[[:space:]]*/, "", v)
+            var[k] = v; next
+        }
+        {
+            k = $0; sub(/:.*/, "", k)
+            if (k != want) next
+            v = $0; sub(/^[^:]*:[[:space:]]*/, "", v)
+            # раскрытие ${...}, до 10 проходов — вложенность в .pc не бывает глубже
+            for (i = 0; i < 10 && v ~ /\$\{/; i++)
+                for (k2 in var) gsub("\\$\\{" k2 "\\}", var[k2], v)
+            print v; exit
+        }
+    ' "$file"
+}
+
+# resolve <модуль> — печатает "cflags|libs", раскрывая Requires рекурсивно
+declare -A SEEN=()
+resolve() {
+    local m="$1" file
+    [ -n "${SEEN[$m]:-}" ] && return 0
+    SEEN[$m]=1
+    file="$(pc_path "$m")" || { echo "pkg-config(shim): нет $m.pc в PKG_CONFIG_PATH" >&2; return 1; }
+
+    CF="$CF $(pc_field "$file" Cflags)"
+    LB="$LB $(pc_field "$file" Libs) $(pc_field "$file" Libs.private)"
+
+    local req dep
+    req="$(pc_field "$file" Requires) $(pc_field "$file" Requires.private)"
+    for dep in $req; do
+        case "$dep" in
+            '>='*|'<='*|'='*|'>'*|'<'*|[0-9]*) continue ;;   # версионные условия
+        esac
+        resolve "$dep" || return 1
+    done
+}
+
+CF="" LB=""
+for m in "${MODS[@]}"; do
+    resolve "$m" || exit 1
+done
+
+if [ -n "$atleast" ] || [ "$want_version" = 1 ]; then
+    file="$(pc_path "${MODS[0]}")" || exit 1
+    ver="$(pc_field "$file" Version)"
+    [ "$want_version" = 1 ] && echo "$ver"
+    if [ -n "$atleast" ]; then
+        [ "$(printf '%s\n%s\n' "$atleast" "$ver" | sort -V | head -1)" = "$atleast" ] || exit 1
+    fi
+    exit 0
+fi
+
+out=""
+[ "$want_cflags" = 1 ] && out="$CF"
+[ "$want_libs"   = 1 ] && out="$out $LB"
+echo "$out" | tr -s ' ' | sed 's/^ //; s/ $//'
