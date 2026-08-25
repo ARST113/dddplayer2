@@ -44,7 +44,7 @@ enum StepOrdinal : jint {
 struct DecoderHandle {
     DecodeSession *session = nullptr;
     ANativeWindow *window = nullptr;
-    /** Текущий кадр; `index < 0` — открытого кадра нет. */
+    /** Текущий кадр: MediaCodec index либо AImage owner. */
     DecodedFrame frame;
 
     DecoderHandle() { frame.index = -1; }
@@ -52,13 +52,23 @@ struct DecoderHandle {
     ~DecoderHandle() {
         // Порядок важен: буфер принадлежит декодеру, и отдать его надо ДО того,
         // как декодер будет удалён, иначе это возврат буфера мёртвому объекту.
-        if (frame.index >= 0 && session != nullptr) session->ReleaseFrame(frame);
+        if ((frame.index >= 0 || frame.image_owner != nullptr) && session != nullptr) {
+            session->ReleaseFrame(frame);
+        }
         delete session;
         if (window != nullptr) ANativeWindow_release(window);
     }
 };
 
 DecoderHandle *Handle(jlong handle) { return reinterpret_cast<DecoderHandle *>(handle); }
+
+bool HasFrame(const DecoderHandle *h) {
+    return h != nullptr && (h->frame.index >= 0 || h->frame.image_owner != nullptr);
+}
+
+void ClearFrame(DecoderHandle *h) {
+    if (h != nullptr) h->frame = DecodedFrame();
+}
 
 /** Хэндл с живой сессией; nullptr и жалоба в лог, если что-то не так. */
 DecoderHandle *Live(jlong handle, const char *what) {
@@ -166,7 +176,7 @@ jint NativeNextFrame(JNIEnv *, jobject, jlong handle, jint timeoutMs) {
     // Предыдущий кадр обязан быть отпущен вызывающим. Молча отпустить его здесь
     // означало бы, что кадр, на который Kotlin ещё держит ссылку, вернулся
     // декодеру и переписался следующим — то есть тихая порча данных в тесте.
-    if (h->frame.index >= 0) {
+    if (HasFrame(h)) {
         DDD_LOGE("decoder: nextFrame вызван без releaseFrame предыдущего кадра");
         return kStepError;
     }
@@ -181,17 +191,17 @@ jint NativeNextFrame(JNIEnv *, jobject, jlong handle, jint timeoutMs) {
 
 void NativeReleaseFrame(JNIEnv *, jobject, jlong handle) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->session == nullptr || h->frame.index < 0) return;
+    if (h == nullptr || h->session == nullptr || !HasFrame(h)) return;
     h->session->ReleaseFrame(h->frame);
-    h->frame.index = -1;
+    ClearFrame(h);
 }
 
 jboolean NativeFlush(JNIEnv *, jobject, jlong handle) {
     DecoderHandle *h = Live(handle, "flush");
     if (h == nullptr) return JNI_FALSE;
-    if (h->frame.index >= 0) {
+    if (HasFrame(h)) {
         h->session->ReleaseFrame(h->frame);
-        h->frame.index = -1;
+        ClearFrame(h);
     }
     return h->session->Flush() ? JNI_TRUE : JNI_FALSE;
 }
@@ -205,11 +215,17 @@ jboolean NativeFlush(JNIEnv *, jobject, jlong handle) {
  */
 jboolean NativeUploadToRenderer(JNIEnv *, jobject, jlong handle, jlong rendererHandle) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->frame.index < 0) {
+    if (!HasFrame(h)) {
         DDD_LOGE("decoder: uploadToRenderer — нет текущего кадра");
         return JNI_FALSE;
     }
-    return UploadFrameToRenderer(rendererHandle, h->frame.frame, h->frame.dovi_mapping.get())
+    // Profile 8.1 already carries an HDR10-compatible BT.2020/PQ base layer.
+    // The current experimental RPU reshaping path turns even a neutral limited-
+    // range black P010 frame green on Pixel (Y=65, U/V=512 in 10-bit code
+    // values). Until that mapper is validated against a Dolby reference, render
+    // the compatible base layer through the regular HDR/PQ path. Decoder,
+    // renderer and tone mapper remain the same unified engine.
+    return UploadFrameToRenderer(rendererHandle, h->frame.frame, nullptr)
                ? JNI_TRUE
                : JNI_FALSE;
 }
@@ -218,7 +234,7 @@ jboolean NativeRenderToSurface(JNIEnv *, jobject, jlong handle) {
     DecoderHandle *h = Handle(handle);
     if (h == nullptr || h->session == nullptr || h->frame.index < 0) return JNI_FALSE;
     if (!h->session->RenderFrame(h->frame)) return JNI_FALSE;
-    h->frame.index = -1;
+    ClearFrame(h);
     return JNI_TRUE;
 }
 
@@ -233,7 +249,7 @@ jboolean NativeSurfaceOutput(JNIEnv *, jobject, jlong handle) {
 /** Значащих байт в строке плоскости; 0 — плоскости нет. */
 jint NativePlaneRowBytes(JNIEnv *, jobject, jlong handle, jint planeIndex) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->session == nullptr || h->frame.index < 0) return 0;
+    if (h == nullptr || h->session == nullptr || !HasFrame(h)) return 0;
     if (planeIndex < 0 || planeIndex > 2 || h->frame.frame.plane[planeIndex] == nullptr) return 0;
     int row_bytes = 0;
     int rows = 0;
@@ -244,7 +260,7 @@ jint NativePlaneRowBytes(JNIEnv *, jobject, jlong handle, jint planeIndex) {
 /** Строк в плоскости; 0 — плоскости нет. */
 jint NativePlaneRows(JNIEnv *, jobject, jlong handle, jint planeIndex) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->session == nullptr || h->frame.index < 0) return 0;
+    if (h == nullptr || h->session == nullptr || !HasFrame(h)) return 0;
     if (planeIndex < 0 || planeIndex > 2 || h->frame.frame.plane[planeIndex] == nullptr) return 0;
     int row_bytes = 0;
     int rows = 0;
@@ -265,7 +281,7 @@ jint NativePlaneRows(JNIEnv *, jobject, jlong handle, jint planeIndex) {
  */
 jint NativeCopyPlane(JNIEnv *env, jobject, jlong handle, jint planeIndex, jbyteArray out) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->session == nullptr || h->frame.index < 0) return -1;
+    if (h == nullptr || h->session == nullptr || !HasFrame(h)) return -1;
     if (planeIndex < 0 || planeIndex > 2 || out == nullptr) return -1;
 
     const FrameDesc &f = h->frame.frame;
@@ -294,7 +310,7 @@ jint NativeCopyPlane(JNIEnv *env, jobject, jlong handle, jint planeIndex, jbyteA
 /** PTS текущего кадра в микросекундах; 0, если кадра нет. */
 jlong NativeFramePtsUs(JNIEnv *, jobject, jlong handle) {
     DecoderHandle *h = Handle(handle);
-    if (h == nullptr || h->frame.index < 0) return 0;
+    if (!HasFrame(h)) return 0;
     return static_cast<jlong>(h->frame.pts_us);
 }
 

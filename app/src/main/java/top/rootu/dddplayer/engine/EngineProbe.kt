@@ -186,7 +186,10 @@ class ProbeCollector : ProbeSink {
         if (isForced) parts += "forced"
         subtitle += BackendSubtitleTrack(
             id = streamIndex,
-            label = parts.joinToString(", ")
+            label = parts.joinToString(", "),
+            codec = codec,
+            language = language,
+            isBitmap = isBitmap
         )
     }
 

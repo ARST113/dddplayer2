@@ -154,8 +154,12 @@ object IntentUtils {
             title = filename ?: uri.lastPathSegment ?: "Video"
         }
 
-        val syncContext = parseDddSyncContext(rawUri, title, filename)
-            ?: parseLampaDddSyncContext(extras, uri, title, filename, null)
+        // The envelope is produced for this exact launch. Fragment parameters
+        // can survive playlist navigation and therefore may describe the
+        // previously played episode/movie. Prefer the fresh envelope and keep
+        // URI metadata only as a compatibility fallback.
+        val syncContext = parseLampaDddSyncContext(extras, uri, title, filename, null)
+            ?: parseDddSyncContext(rawUri, title, filename)
         val startPosition = getLongExtraCompat(extras, "position", 0L)
             .takeIf { it > 0L }
             ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
@@ -276,8 +280,8 @@ object IntentUtils {
             var title = names?.getOrNull(i)
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
             if (title.isNullOrEmpty()) title = uri.lastPathSegment
-            val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i))
-                ?: parseLampaDddSyncContext(extras, uri, title, filenames?.getOrNull(i), i)
+            val syncContext = parseLampaDddSyncContext(extras, uri, title, filenames?.getOrNull(i), i)
+                ?: parseDddSyncContext(rawUri, title, filenames?.getOrNull(i))
 
             val itemSubs = if (playlistSubsBundles != null && i < playlistSubsBundles.size) {
                 parseSubtitles(playlistSubsBundles[i], "uris", "names")

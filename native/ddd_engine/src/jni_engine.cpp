@@ -27,6 +27,7 @@
 #include "hdr_static_info.h"
 #include "jni_decoder.h"
 #include "jni_audio_decoder.h"
+#include "jni_subtitle_decoder.h"
 #include "jni_io_source.h"
 #include "jni_renderer.h"
 #include "jni_util.h"
@@ -423,6 +424,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     if (!ddd::RegisterRendererNatives(env)) return JNI_ERR;
     if (!ddd::RegisterDecoderNatives(env)) return JNI_ERR;
     if (!ddd::RegisterAudioDecoderNatives(env)) return JNI_ERR;
+    if (!ddd::RegisterSubtitleDecoderNatives(env)) return JNI_ERR;
 
     DDD_LOGI("jni: ddd_engine загружен, ffmpeg %s", av_version_info());
     return JNI_VERSION_1_6;

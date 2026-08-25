@@ -792,6 +792,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             handleVideoGeometryChanged(width, height, pixelWidthHeightRatio,
                 playerManager.getActiveBackendId())
         }
+        playerManager.onBackendSubtitleTextChanged = { text ->
+            _cues.postValue(
+                text?.takeIf { it.isNotBlank() }
+                    ?.let { listOf(Cue.Builder().setText(it).build()) }
+                    ?: emptyList()
+            )
+        }
         playerManager.onBackendEnded = {
             saveCurrentSettings()
             _playbackEnded.postValue(true)
@@ -1910,6 +1917,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     "subtitle_select requested=$index targetId=${track.id} targetLabel=${track.label} ok=$ok selectedAfter=$selectedAfter"
                 )
                 _toastMessage.postValue("VLC subtitles: ${track.label}")
+                if (ok || selectedAfter == track.id) {
+                    val resolvedIndex = list.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                    val option = buildVlcSubtitleTrackOption(track, resolvedIndex)
+                    _currentSubtitleTrack.value = option
+                    if (persist) saveCurrentSettings()
+                    emitTrackSelectionChanged(option, resolvedIndex, "subtitle", reason, matchScore)
+                }
             }
             return
         }

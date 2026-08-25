@@ -1,5 +1,6 @@
 package top.rootu.dddplayer.bridge
 
+import android.util.Log
 import com.google.gson.Gson
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -12,7 +13,12 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import kotlin.concurrent.thread
 
-class LocalBridgeServer(private val host: String = "127.0.0.1", private val port: Int = 39677, private val token: String?, private val store: LocalBridgeStore) {
+class LocalBridgeServer(
+    private val host: String = "127.0.0.1",
+    private val port: Int = 39677,
+    private val token: String?,
+    private val store: LocalBridgeStore
+) {
     @Volatile private var server: ServerSocket? = null
     @Volatile private var pool: ExecutorService? = null
     @Volatile private var acceptThread: Thread? = null
@@ -34,29 +40,68 @@ class LocalBridgeServer(private val host: String = "127.0.0.1", private val port
                 try {
                     localPool.execute {
                         socket.use { s ->
-                            val reader = BufferedReader(InputStreamReader(s.getInputStream()))
-                            val request = reader.readLine() ?: return@execute
-                            val parts = request.split(" ")
-                            val method = parts.getOrNull(0) ?: "GET"
-                            val pathWithQuery = parts.getOrNull(1) ?: "/"
-                            while (reader.readLine()?.isNotEmpty() == true) {}
-                            val (path, query) = pathWithQuery.split("?", limit = 2).let { it[0] to it.getOrNull(1) }
-                            val q = parseQuery(query)
-                            if (method != "GET" && method != "OPTIONS") return@execute write(s, 405, mapOf("error" to "method_not_allowed"))
-                            val body = when {
-                                method == "OPTIONS" -> mapOf("ok" to true)
-                                path == "/ping" -> mapOf("ok" to true, "service" to "dddplayer-local-bridge", "port" to port)
-                                path == "/state" -> {
-                                    if (!checkToken(q)) return@execute write(s, 403, mapOf("error" to "forbidden"))
-                                    mapOf("ok" to true, "state" to store.getStateView(q["sid"]))
+                            try {
+                                val reader = BufferedReader(InputStreamReader(s.getInputStream()))
+                                val request = reader.readLine() ?: return@execute
+                                val parts = request.split(" ")
+                                val method = parts.getOrNull(0) ?: "GET"
+                                val pathWithQuery = parts.getOrNull(1) ?: "/"
+                                while (reader.readLine()?.isNotEmpty() == true) {}
+                                val (path, query) = pathWithQuery.split("?", limit = 2)
+                                    .let { it[0] to it.getOrNull(1) }
+                                val q = parseQuery(query)
+                                if (method != "GET" && method != "OPTIONS") {
+                                    return@execute write(
+                                        s,
+                                        405,
+                                        mapOf("error" to "method_not_allowed")
+                                    )
                                 }
-                                path == "/events" -> {
-                                    if (!checkToken(q)) return@execute write(s, 403, mapOf("error" to "forbidden"))
-                                    mapOf("ok" to true, "events" to store.getEvents(q["sid"], q["since"]?.toLongOrNull(), q["limit"]?.toIntOrNull()))
+                                val body = when {
+                                    method == "OPTIONS" -> mapOf("ok" to true)
+                                    path == "/ping" -> mapOf(
+                                        "ok" to true,
+                                        "service" to "dddplayer-local-bridge",
+                                        "port" to port
+                                    )
+                                    path == "/state" -> {
+                                        if (!checkToken(q)) {
+                                            return@execute write(
+                                                s,
+                                                403,
+                                                mapOf("error" to "forbidden")
+                                            )
+                                        }
+                                        mapOf("ok" to true, "state" to store.getStateView(q["sid"]))
+                                    }
+                                    path == "/events" -> {
+                                        if (!checkToken(q)) {
+                                            return@execute write(
+                                                s,
+                                                403,
+                                                mapOf("error" to "forbidden")
+                                            )
+                                        }
+                                        mapOf(
+                                            "ok" to true,
+                                            "events" to store.getEvents(
+                                                q["sid"],
+                                                q["since"]?.toLongOrNull(),
+                                                q["limit"]?.toIntOrNull()
+                                            )
+                                        )
+                                    }
+                                    else -> return@execute write(
+                                        s,
+                                        404,
+                                        mapOf("error" to "not_found")
+                                    )
                                 }
-                                else -> return@execute write(s, 404, mapOf("error" to "not_found"))
+                                write(s, 200, body)
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "Request failed", t)
+                                runCatching { write(s, 500, mapOf("error" to "internal_error")) }
                             }
-                            write(s, 200, body)
                         }
                     }
                 } catch (_: RejectedExecutionException) {
@@ -100,5 +145,9 @@ class LocalBridgeServer(private val host: String = "127.0.0.1", private val port
         if (localAcceptThread != null && localAcceptThread !== Thread.currentThread()) {
             runCatching { localAcceptThread.join(500L) }
         }
+    }
+
+    private companion object {
+        const val TAG = "DDDLocalBridge"
     }
 }

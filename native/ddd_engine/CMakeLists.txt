@@ -66,11 +66,13 @@ add_library(ddd_engine SHARED
     src/sw_decoder.cpp
     src/decode_session.cpp
     src/audio_decoder.cpp
+    src/subtitle_decoder.cpp
     src/jni_util.cpp
     src/jni_io_source.cpp
     src/jni_renderer.cpp
     src/jni_decoder.cpp
     src/jni_audio_decoder.cpp
+    src/jni_subtitle_decoder.cpp
     src/jni_engine.cpp
     # FFmpeg keeps its DOVI parser private. Compile the three small LGPL
     # implementation units into the engine so MediaCodec playback can consume

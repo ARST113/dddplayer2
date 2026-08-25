@@ -36,7 +36,18 @@ class TorrServerCacheClient(
                 if (!response.isSuccessful) return@use null
 
                 val raw = response.body?.string() ?: return@use null
-                val root = JsonParser.parseString(raw).asObjectOrNull() ?: return@use null
+                // TorrServer v1.2.x serialises the cache object twice: the HTTP
+                // body is a JSON string whose contents are the actual JSON
+                // object. Older builds returned the object directly. Accept
+                // both wire formats so the five-dot indicator is not silently
+                // disabled on current servers.
+                val first = JsonParser.parseString(raw)
+                val decoded = if (first.isJsonPrimitive && first.asJsonPrimitive.isString) {
+                    JsonParser.parseString(first.asString)
+                } else {
+                    first
+                }
+                val root = decoded.asObjectOrNull() ?: return@use null
                 parsePieceHealth(root)
             }
         }.getOrNull()

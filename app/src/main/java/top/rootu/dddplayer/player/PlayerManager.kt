@@ -102,6 +102,7 @@ class PlayerManager(
     var onBackendError: ((Throwable) -> Unit)? = null
     var onBackendPositionChanged: ((Long, Long) -> Unit)? = null
     var onBackendVideoSizeChanged: ((Int, Int, Float) -> Unit)? = null
+    var onBackendSubtitleTextChanged: ((String?) -> Unit)? = null
 
     private val resolvedMediaTypes = ConcurrentHashMap<String, String>()
 
@@ -656,6 +657,9 @@ class PlayerManager(
             val selected = items.getOrNull(startIndex) ?: return
             val backend = NativePlaybackBackend(createParsingDataSourceFactory())
             nativeBackend = backend
+            backend.setInitialAudioTrackId(
+                selected.dddSyncContext?.lampaAudioTrackId?.toIntOrNull()
+            )
             backend.attachSurfaceHolder(boundSurfaceHolder)
             attachNativeListener(backend)
             backend.setPlaybackSpeed(currentPlaybackSpeed)
@@ -848,9 +852,20 @@ class PlayerManager(
             nativeBackend?.selectAudioTrack(id) == true
         else -> vlcBackend?.selectAudioTrack(id) == true
     }
-    fun getVlcSubtitleTracks(): List<BackendSubtitleTrack> = vlcBackend?.getSubtitleTracks() ?: emptyList()
-    fun getVlcSelectedSubtitleTrackId(): Int? = vlcBackend?.getSelectedSubtitleTrack()
-    fun selectVlcSubtitleTrackById(id: Int): Boolean = vlcBackend?.selectSubtitleTrack(id) == true
+    fun getVlcSubtitleTracks(): List<BackendSubtitleTrack> = when {
+        activeBackend != null && activeBackend === nativeBackend -> nativeBackend?.getSubtitleTracks()
+        else -> vlcBackend?.getSubtitleTracks()
+    } ?: emptyList()
+    fun getVlcSelectedSubtitleTrackId(): Int? = when {
+        activeBackend != null && activeBackend === nativeBackend ->
+            nativeBackend?.getSelectedSubtitleTrackId()
+        else -> vlcBackend?.getSelectedSubtitleTrack()
+    }
+    fun selectVlcSubtitleTrackById(id: Int): Boolean = when {
+        activeBackend != null && activeBackend === nativeBackend ->
+            nativeBackend?.selectSubtitleTrack(id) == true
+        else -> vlcBackend?.selectSubtitleTrack(id) == true
+    }
     fun getCurrentAudioTrackLabel(): String? {
         return when {
         activeBackend != null && (activeBackend === vlcBackend || activeBackend === nativeBackend) -> {
@@ -926,6 +941,9 @@ class PlayerManager(
             }
             override fun onVideoSizeChanged(width: Int, height: Int, pixelWidthHeightRatio: Float) {
                 onBackendVideoSizeChanged?.invoke(width, height, pixelWidthHeightRatio)
+            }
+            override fun onSubtitleTextChanged(text: String?) {
+                onBackendSubtitleTextChanged?.invoke(text)
             }
         })
     }

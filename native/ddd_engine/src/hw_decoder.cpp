@@ -6,6 +6,12 @@
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaError.h>
 #include <media/NdkMediaFormat.h>
+#include <media/NdkImage.h>
+#include <media/NdkImageReader.h>
+
+#include <android/data_space.h>
+#include <android/hardware_buffer.h>
+#include <android/native_window.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -240,6 +246,7 @@ HwVideoDecoder::~HwVideoDecoder() {
         AMediaCodec_stop(codec_);
         AMediaCodec_delete(codec_);
     }
+    DestroyImageReader();
     if (bsf_ != nullptr) av_bsf_free(&bsf_);
 }
 
@@ -306,6 +313,7 @@ bool HwVideoDecoder::Start(const DecoderConfig &cfg, const char *codec_name, boo
         AMediaCodec_delete(codec_);
         codec_ = nullptr;
     }
+    DestroyImageReader();
     format_known_ = false;
     eos_sent_ = false;
     surface_output_ = cfg.surface != nullptr;
@@ -340,12 +348,27 @@ bool HwVideoDecoder::Start(const DecoderConfig &cfg, const char *codec_name, boo
     if (cfg.color_transfer != 0) AMediaFormat_setInt32(fmt, kKeyColorTransfer, cfg.color_transfer);
     if (cfg.color_range != 0) AMediaFormat_setInt32(fmt, kKeyColorRange, cfg.color_range);
 
-    const media_status_t configured = AMediaCodec_configure(codec_, fmt, cfg.surface, nullptr, 0);
+    // Android 14+ умеет отдать P010 через AImageReader Surface с настоящими
+    // plane/row/pixel stride. Это принципиально отличается от обычного Surface:
+    // кадр всё ещё приходит в наш GLES-рендерер и проходит DOVI/4XVR tone-map.
+    // На Pixel 10 ByteBuffer-адаптер CCodec возвращает один зелёный буфер, после
+    // чего пишет `ConstGraphicBlockBuffer::canCopy: buffer ref doesn't exist`.
+    // ImageReader не просит CCodec копировать graphic block в выдуманную
+    // contiguous-раскладку и потому обходит именно этот платформенный дефект.
+    if (!surface_output_ && set_color_format && cfg.prefer_ten_bit) {
+        CreateP010ImageReader(cfg);
+    }
+    ANativeWindow *output_window = surface_output_
+                                       ? cfg.surface
+                                       : static_cast<ANativeWindow *>(image_window_);
+    const media_status_t configured =
+        AMediaCodec_configure(codec_, fmt, output_window, nullptr, 0);
     AMediaFormat_delete(fmt);
     if (configured != AMEDIA_OK) {
         SetError(error, "configure = %d", static_cast<int>(configured));
         AMediaCodec_delete(codec_);
         codec_ = nullptr;
+        DestroyImageReader();
         return false;
     }
 
@@ -354,6 +377,7 @@ bool HwVideoDecoder::Start(const DecoderConfig &cfg, const char *codec_name, boo
         SetError(error, "start = %d", static_cast<int>(started));
         AMediaCodec_delete(codec_);
         codec_ = nullptr;
+        DestroyImageReader();
         return false;
     }
 
@@ -372,9 +396,57 @@ bool HwVideoDecoder::Start(const DecoderConfig &cfg, const char *codec_name, boo
     }
     DDD_LOGI("decoder: %s, mime=%s, %dx%d, csd=%zu Б, output=%s, color-format=%s", name_.c_str(), cfg.mime,
              cfg.par->width, cfg.par->height, csd_.size(),
-             surface_output_ ? "Surface" : "ByteBuffer",
+             surface_output_ ? "Surface" : (image_output_ ? "ImageReader(P010)" : "ByteBuffer"),
              set_color_format ? (cfg.prefer_ten_bit ? "P010" : "flexible") : "по умолчанию");
     return true;
+}
+
+bool HwVideoDecoder::CreateP010ImageReader(const DecoderConfig &cfg) {
+    if (__builtin_available(android 34, *)) {
+        // The API-34 call below is intentionally kept inside the positive
+        // availability branch. With weak unavailable symbols this also keeps
+        // the minSdk-23 binary loadable on older Android versions.
+
+        AImageReader *reader = nullptr;
+        const media_status_t created = AImageReader_newWithDataSpace(
+            cfg.par->width, cfg.par->height, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, 4,
+            AHARDWAREBUFFER_FORMAT_YCbCr_P010, ADATASPACE_UNKNOWN, &reader);
+        if (created != AMEDIA_OK || reader == nullptr) {
+            DDD_LOGW("decoder: P010 ImageReader не создан (%d), остаётся ByteBuffer",
+                     static_cast<int>(created));
+            return false;
+        }
+
+        ANativeWindow *window = nullptr;
+        const media_status_t got_window = AImageReader_getWindow(reader, &window);
+        if (got_window != AMEDIA_OK || window == nullptr) {
+            DDD_LOGW("decoder: у P010 ImageReader нет окна (%d), остаётся ByteBuffer",
+                     static_cast<int>(got_window));
+            AImageReader_delete(reader);
+            return false;
+        }
+
+        image_reader_ = reader;
+        image_window_ = window;  // принадлежит reader, отдельно release не нужен
+        image_output_ = true;
+        image_pending_ = false;
+        image_layout_logged_ = false;
+        DDD_LOGI("decoder: P010 вывод через CPU-readable AImageReader");
+        return true;
+    }
+    return false;
+}
+
+void HwVideoDecoder::DestroyImageReader() {
+    image_pending_ = false;
+    pending_image_pts_us_ = 0;
+    image_window_ = nullptr;
+    image_output_ = false;
+    image_layout_logged_ = false;
+    if (image_reader_ != nullptr) {
+        AImageReader_delete(static_cast<AImageReader *>(image_reader_));
+        image_reader_ = nullptr;
+    }
 }
 
 HwVideoDecoder::Feed HwVideoDecoder::Push(AVPacket *pkt, int64_t pts_us, int timeout_ms) {
@@ -495,7 +567,13 @@ bool HwVideoDecoder::ReadOutputFormat(std::string *error) {
     if (AMediaFormat_getInt32(fmt, kKeyWidth, &value)) out.width = value;
     if (AMediaFormat_getInt32(fmt, kKeyHeight, &value)) out.height = value;
 
-    if (!surface_output_ && !PixelFormatFromColorFormat(out.color_format, &out.format)) {
+    if (image_output_) {
+        // Surface-режим MediaCodec вправе сообщить COLOR_FormatSurface даже
+        // когда сам HardwareBuffer — P010. Формат ImageReader задан явно, так
+        // что здесь источник истины именно он.
+        out.color_format = kColorFormatYuvP010;
+        out.format = FramePixelFormat::kP010;
+    } else if (!surface_output_ && !PixelFormatFromColorFormat(out.color_format, &out.format)) {
         SetError(error, "неизвестный color-format 0x%x", out.color_format);
         AMediaFormat_delete(fmt);
         return false;
@@ -547,8 +625,158 @@ bool HwVideoDecoder::ReadOutputFormat(std::string *error) {
     return true;
 }
 
+bool HwVideoDecoder::FillImageFrame(void *opaque, DecodedFrame *out) {
+    AImage *image = static_cast<AImage *>(opaque);
+    if (image == nullptr || out == nullptr) return false;
+
+    int32_t planes = 0;
+    if (AImage_getNumberOfPlanes(image, &planes) != AMEDIA_OK || planes < 2) {
+        DDD_LOGE("decoder: P010 AImage содержит %d плоскостей", planes);
+        return false;
+    }
+
+    uint8_t *y = nullptr;
+    uint8_t *u = nullptr;
+    uint8_t *v = nullptr;
+    int y_size = 0;
+    int u_size = 0;
+    int v_size = 0;
+    int32_t y_stride = 0;
+    int32_t uv_stride = 0;
+    int32_t y_pixel = 0;
+    int32_t uv_pixel = 0;
+    if (AImage_getPlaneData(image, 0, &y, &y_size) != AMEDIA_OK ||
+        AImage_getPlaneData(image, 1, &u, &u_size) != AMEDIA_OK ||
+        AImage_getPlaneRowStride(image, 0, &y_stride) != AMEDIA_OK ||
+        AImage_getPlaneRowStride(image, 1, &uv_stride) != AMEDIA_OK ||
+        AImage_getPlanePixelStride(image, 0, &y_pixel) != AMEDIA_OK ||
+        AImage_getPlanePixelStride(image, 1, &uv_pixel) != AMEDIA_OK) {
+        DDD_LOGE("decoder: не прочитать плоскости P010 AImage");
+        return false;
+    }
+    if (planes > 2) AImage_getPlaneData(image, 2, &v, &v_size);
+
+    // Для P010 Image API описывает U и V как две логические плоскости поверх
+    // одного interleaved UV-буфера: U указывает на первый uint16_t, V — на
+    // следующий, pixelStride=4. Наш рендерер принимает ровно такую плоскость.
+    if (y == nullptr || u == nullptr || y_pixel != 2 || uv_pixel != 4 ||
+        y_stride < output_.width * 2 || uv_stride < output_.width * 2) {
+        DDD_LOGE("decoder: неожиданная P010 AImage layout: planes=%d yPixel=%d uvPixel=%d yStride=%d uvStride=%d",
+                 planes, y_pixel, uv_pixel, y_stride, uv_stride);
+        return false;
+    }
+
+    const size_t y_need = static_cast<size_t>(output_.height - 1) * y_stride +
+                          static_cast<size_t>(output_.width) * 2;
+    const int chroma_h = (output_.height + 1) / 2;
+    const size_t uv_need = static_cast<size_t>(chroma_h - 1) * uv_stride +
+                           static_cast<size_t>(output_.width) * 2;
+    if (y_need > static_cast<size_t>(y_size) || uv_need > static_cast<size_t>(u_size)) {
+        DDD_LOGE("decoder: короткая P010 AImage: Y=%d/%zu UV=%d/%zu",
+                 y_size, y_need, u_size, uv_need);
+        return false;
+    }
+
+    if (!image_layout_logged_) {
+        const ptrdiff_t vu_delta = (v != nullptr) ? v - u : 0;
+        DDD_LOGI("decoder: P010 AImage layout planes=%d Y=%dБ stride=%d pixel=%d UV=%dБ stride=%d pixel=%d V-U=%td",
+                 planes, y_size, y_stride, y_pixel, u_size, uv_stride, uv_pixel, vu_delta);
+
+        // A valid-looking AImage layout is not sufficient: on some Android 16
+        // devices the decoder can hand out a correctly sized buffer whose
+        // sample representation is not what the GLES upload path expects. Log
+        // a sparse grid from the first image. P010 must be MSB aligned (the low
+        // six bits are zero), luma must not be a constant, and neutral chroma
+        // is close to 0x8000. Sampling only 16x16 points keeps this diagnostic
+        // negligible even for an 8K frame.
+        uint16_t y_min = UINT16_MAX, y_max = 0;
+        uint16_t u_min = UINT16_MAX, u_max = 0;
+        uint16_t v_min = UINT16_MAX, v_max = 0;
+        uint64_t y_sum = 0, u_sum = 0, v_sum = 0;
+        int y_low6 = 0, u_low6 = 0, v_low6 = 0;
+        int samples = 0;
+        constexpr int kGrid = 16;
+        for (int gy = 0; gy < kGrid; ++gy) {
+            const int py = (output_.height - 1) * gy / (kGrid - 1);
+            const int cy = (chroma_h - 1) * gy / (kGrid - 1);
+            for (int gx = 0; gx < kGrid; ++gx) {
+                const int px = (output_.width - 1) * gx / (kGrid - 1);
+                const int cx = ((output_.width + 1) / 2 - 1) * gx / (kGrid - 1);
+                uint16_t ys = 0, us = 0, vs = 0;
+                memcpy(&ys, y + static_cast<size_t>(py) * y_stride + static_cast<size_t>(px) * 2,
+                       sizeof ys);
+                memcpy(&us, u + static_cast<size_t>(cy) * uv_stride + static_cast<size_t>(cx) * 4,
+                       sizeof us);
+                memcpy(&vs, u + static_cast<size_t>(cy) * uv_stride + static_cast<size_t>(cx) * 4 + 2,
+                       sizeof vs);
+                if (ys < y_min) y_min = ys;
+                if (ys > y_max) y_max = ys;
+                if (us < u_min) u_min = us;
+                if (us > u_max) u_max = us;
+                if (vs < v_min) v_min = vs;
+                if (vs > v_max) v_max = vs;
+                y_sum += ys;
+                u_sum += us;
+                v_sum += vs;
+                y_low6 += (ys & 0x3fU) != 0;
+                u_low6 += (us & 0x3fU) != 0;
+                v_low6 += (vs & 0x3fU) != 0;
+                ++samples;
+            }
+        }
+        DDD_LOGI("decoder: P010 samples n=%d Y=%u..%u avg=%llu low6=%d U=%u..%u avg=%llu low6=%d V=%u..%u avg=%llu low6=%d",
+                 samples, y_min, y_max,
+                 static_cast<unsigned long long>(y_sum / samples), y_low6,
+                 u_min, u_max, static_cast<unsigned long long>(u_sum / samples), u_low6,
+                 v_min, v_max, static_cast<unsigned long long>(v_sum / samples), v_low6);
+        image_layout_logged_ = true;
+    }
+
+    out->frame.format = FramePixelFormat::kP010;
+    out->frame.width = output_.width;
+    out->frame.height = output_.height;
+    out->frame.plane[0] = y + static_cast<size_t>(output_.crop_top) * y_stride +
+                          static_cast<size_t>(output_.crop_left) * 2;
+    out->frame.stride[0] = y_stride;
+    out->frame.plane[1] = u + static_cast<size_t>(output_.crop_top / 2) * uv_stride +
+                          static_cast<size_t>(output_.crop_left / 2) * 4;
+    out->frame.stride[1] = uv_stride;
+    out->frame.plane[2] = nullptr;
+    out->frame.stride[2] = 0;
+    out->image_owner = image;
+    out->index = -1;
+    output_.stride = y_stride;
+    output_.slice_height = output_.height;
+    output_.stride_reported = true;
+    return true;
+}
+
+HwVideoDecoder::Pull HwVideoDecoder::AcquirePendingImage(DecodedFrame *out) {
+    AImage *image = nullptr;
+    const media_status_t acquired = AImageReader_acquireNextImage(
+        static_cast<AImageReader *>(image_reader_), &image);
+    if (acquired == AMEDIA_IMGREADER_NO_BUFFER_AVAILABLE) return Pull::kAgain;
+    if (acquired != AMEDIA_OK || image == nullptr) {
+        DDD_LOGE("decoder: acquire P010 AImage = %d", static_cast<int>(acquired));
+        image_pending_ = false;
+        return Pull::kError;
+    }
+
+    image_pending_ = false;
+    if (!FillImageFrame(image, out)) {
+        AImage_delete(image);
+        return Pull::kError;
+    }
+    out->pts_us = pending_image_pts_us_;
+    pending_image_pts_us_ = 0;
+    ++frames_out_;
+    return Pull::kFrame;
+}
+
 HwVideoDecoder::Pull HwVideoDecoder::DequeueFrame(DecodedFrame *out, int timeout_ms) {
     if (codec_ == nullptr || out == nullptr) return Pull::kError;
+
+    if (image_output_ && image_pending_) return AcquirePendingImage(out);
 
     AMediaCodecBufferInfo info = {};
     const ssize_t index =
@@ -556,6 +784,29 @@ HwVideoDecoder::Pull HwVideoDecoder::DequeueFrame(DecodedFrame *out, int timeout
 
     if (index >= 0) {
         const bool eos = (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != 0;
+        if (image_output_) {
+            if (eos) {
+                AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(index), false);
+                return Pull::kEos;
+            }
+            if (!format_known_) {
+                std::string why;
+                if (!ReadOutputFormat(&why)) {
+                    DDD_LOGE("decoder: ImageReader-формат вывода не разобран: %s", why.c_str());
+                    AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(index), false);
+                    return Pull::kError;
+                }
+            }
+            const media_status_t rendered =
+                AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(index), true);
+            if (rendered != AMEDIA_OK) {
+                DDD_LOGE("decoder: отправка P010 в ImageReader = %d", static_cast<int>(rendered));
+                return Pull::kError;
+            }
+            image_pending_ = true;
+            pending_image_pts_us_ = info.presentationTimeUs;
+            return AcquirePendingImage(out);
+        }
         if (surface_output_) {
             if (eos) {
                 AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(index), false);
@@ -630,6 +881,10 @@ HwVideoDecoder::Pull HwVideoDecoder::DequeueFrame(DecodedFrame *out, int timeout
 }
 
 void HwVideoDecoder::ReleaseFrame(const DecodedFrame &frame) {
+    if (frame.image_owner != nullptr) {
+        AImage_delete(static_cast<AImage *>(frame.image_owner));
+        return;
+    }
     if (codec_ == nullptr || frame.index < 0) return;
     AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(frame.index), false);
 }
@@ -644,11 +899,25 @@ bool HwVideoDecoder::Flush() {
     if (codec_ == nullptr) return false;
     pending_.clear();
     eos_sent_ = false;
+    image_pending_ = false;
+    pending_image_pts_us_ = 0;
     if (bsf_ != nullptr) av_bsf_flush(bsf_);
     const media_status_t st = AMediaCodec_flush(codec_);
     if (st != AMEDIA_OK) {
         DDD_LOGE("decoder: flush = %d", static_cast<int>(st));
         return false;
+    }
+    if (image_reader_ != nullptr) {
+        // Кадры до seek уже могли попасть в очередь Surface. Если оставить их,
+        // первый acquire после flush вернёт старый PTS и A/V sync отбросит всю
+        // новую последовательность как «опоздавшую».
+        for (;;) {
+            AImage *stale = nullptr;
+            const media_status_t acquired = AImageReader_acquireNextImage(
+                static_cast<AImageReader *>(image_reader_), &stale);
+            if (acquired != AMEDIA_OK || stale == nullptr) break;
+            AImage_delete(stale);
+        }
     }
     // format_known_ намеренно не сбрасывается: flush не меняет раскладку вывода,
     // а сброс заставил бы перечитывать формат на первом же кадре после seek —

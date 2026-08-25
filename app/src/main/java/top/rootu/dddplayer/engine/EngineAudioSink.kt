@@ -57,6 +57,14 @@ class EngineAudioSink(
     val playedFramesCount: Long
         @Synchronized get() = playedFramesLocked()
 
+    /**
+     * Реальная ёмкость клиентского буфера AudioTrack. На Pixel deep-buffer
+     * требует заполнить её целиком до первого аппаратного старта; фиксированный
+     * preroll меньше этого значения создаёт взаимную блокировку.
+     */
+    val bufferCapacityDurationUs: Long
+        get() = framesToUs(track.bufferSizeInFrames.toLong())
+
     val queuedDurationUs: Long
         @Synchronized get() = framesToUs(max(0L, submittedFrames - playedFramesLocked()))
 
@@ -105,9 +113,14 @@ class EngineAudioSink(
     }
 
     /**
-     * Пытается записать весь оставшийся PCM; ByteBuffer продвигается на число
-     * принятых байтов. При pause/resume или смене маршрута AudioTrack вправе
-     * вернуть частичную запись — вызывающий должен позже дописать остаток.
+     * Один раз неблокирующе передаёт оставшийся PCM; ByteBuffer продвигается на
+     * число принятых байтов. Остаток дописывает [EngineAudioPump].
+     *
+     * `WRITE_BLOCKING` здесь опасен: при холодном старте/перемаршрутизации
+     * Android 16 может не вернуть первый write, пока AudioTrack ещё не начал
+     * потреблять данные. Тогда audio clock остаётся на первом PTS, видео вечно
+     * ждёт его, а demux заполняет 100-МБ очередь. Неблокирующий вызов сохраняет
+     * поток отзывчивым при pause/seek/stop и штатно допускает partial/zero.
      * Возвращает число sample frames, фактически поставленных в очередь.
      */
     fun write(buffer: ByteBuffer, ptsUs: Long): Int {
@@ -120,13 +133,12 @@ class EngineAudioSink(
         synchronized(this) {
             if (basePtsUs == null) basePtsUs = ptsUs - framesToUs(submittedFrames)
         }
-        var writtenBytes = 0
-        while (buffer.hasRemaining()) {
-            val wrote = track.write(buffer, buffer.remaining(), AudioTrack.WRITE_BLOCKING)
-            if (wrote < 0) throw IllegalStateException("AudioTrack.write: $wrote")
-            if (wrote == 0) break
-            writtenBytes += wrote
-        }
+        val writtenBytes = track.write(
+            buffer,
+            buffer.remaining(),
+            AudioTrack.WRITE_NON_BLOCKING
+        )
+        if (writtenBytes < 0) throw IllegalStateException("AudioTrack.write: $writtenBytes")
         val frames = writtenBytes / bytesPerFrame
         synchronized(this) { submittedFrames += frames }
         return frames

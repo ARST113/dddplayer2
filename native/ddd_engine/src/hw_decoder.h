@@ -162,6 +162,12 @@ struct DecodedFrame {
     std::shared_ptr<const DoviFrameMapping> dovi_mapping;
     /** Индекс буфера декодера; -1 — кадра нет. */
     ssize_t index = -1;
+    /**
+     * Владение AImage для P010 ImageReader-вывода. Непрозрачный указатель
+     * нужен, чтобы заголовок движка не тащил NdkImageReader во все единицы
+     * компиляции. Освобождается только через [ReleaseFrame].
+     */
+    void *image_owner = nullptr;
 };
 
 /** Общий контракт HW MediaCodec и SW libavcodec для DecodeSession. */
@@ -279,6 +285,18 @@ private:
     /** Забирает output format в [output_]; true — раскладка распознана. */
     bool ReadOutputFormat(std::string *error);
 
+    /** Создаёт CPU-readable P010 Surface для Android 14+; false — оставить ByteBuffer. */
+    bool CreateP010ImageReader(const DecoderConfig &cfg);
+
+    /** Удаляет ImageReader и забывает ожидающий кадр. */
+    void DestroyImageReader();
+
+    /** Забирает уже отправленный в ImageReader кадр, не теряя его PTS. */
+    Pull AcquirePendingImage(DecodedFrame *out);
+
+    /** Переводит плоскости AImage в общий FrameDesc без копии. */
+    bool FillImageFrame(void *image, DecodedFrame *out);
+
     /** Кладёт содержимое [pending_] в буфер декодера. */
     Feed WritePending(int timeout_ms);
 
@@ -305,6 +323,12 @@ private:
     bool eos_sent_ = false;
     bool format_known_ = false;
     bool surface_output_ = false;
+    void *image_reader_ = nullptr;
+    void *image_window_ = nullptr;
+    bool image_output_ = false;
+    bool image_pending_ = false;
+    bool image_layout_logged_ = false;
+    int64_t pending_image_pts_us_ = 0;
 };
 
 }  // namespace ddd

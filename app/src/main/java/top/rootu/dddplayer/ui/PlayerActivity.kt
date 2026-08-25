@@ -287,7 +287,11 @@ class PlayerActivity : AppCompatActivity() {
             flushFinalOnce("destroy")
         }
         super.onDestroy()
-        if (isChangingConfigurations) LocalBridgeManager.stopNow() else LocalBridgeManager.stopDelayed(5000L)
+        // The local bridge belongs to the application process, not to one
+        // PlayerActivity. Lampa reads /state and /events after the player has
+        // closed; stopping it here made both endpoints disappear exactly five
+        // seconds after returning to Lampa. startOrReuse() will replace it when
+        // a later launch changes port/token/configuration.
     }
 
     private fun createBridgeDispatcher(config: BridgeConfig): BridgeDispatcher? {

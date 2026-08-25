@@ -132,6 +132,40 @@ class IntentUtilsTest {
         assertEquals(3000L, playlist[1].startPositionMs)
     }
 
+    @Test
+    fun freshLampaHeaderWinsOverStaleUriFragmentForSingleFile() {
+        val payload = """{
+          "eventsUrl":"http://lampac.fun/ddd-sync/v1/events",
+          "schema":1,
+          "deviceId":"pixel",
+          "sessionId":"fresh-session",
+          "activeIndex":0,
+          "items":[
+            {"index":0,"contentKey":"silo:s3:e6","sourceKey":"hash|6|Silo.S03E06.mkv","title":"Silo 6","filename":"Silo.S03E06.mkv","positionMs":3000}
+          ]
+        }""".trimIndent()
+        val intent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse(
+                "http://213.171.26.189:2367/stream/Silo.S03E06.mkv?link=hash&index=6&play" +
+                    "#ddd_sid=stale-session&ddd_content_key=silo%3As3%3Ae5" +
+                    "&ddd_source_key=hash%7C5%7CSilo.S03E05.mkv"
+            )
+        ).putExtra(
+            "headers",
+            arrayOf(DDD_SYNC_HEADER_FOR_TEST, Uri.encode(payload), "User-Agent", "Lampa")
+        )
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val (playlist, startIndex) = IntentUtils.parseIntent(context, intent)
+
+        assertEquals(0, startIndex)
+        assertEquals(1, playlist.size)
+        assertEquals("fresh-session", playlist.single().dddSyncContext?.sessionId)
+        assertEquals("silo:s3:e6", playlist.single().dddSyncContext?.contentKey)
+        assertEquals("hash|6|Silo.S03E06.mkv", playlist.single().dddSyncContext?.sourceKey)
+    }
+
     private companion object {
         const val DDD_SYNC_HEADER_FOR_TEST = "X-Lampa-DDD-Sync"
     }

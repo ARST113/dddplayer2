@@ -13,6 +13,11 @@ class EngineAudioPump(
     private val sink: EngineAudioSink,
     private val targetQueueUs: Long = DEFAULT_TARGET_QUEUE_US
 ) {
+    // AudioTrack with DEEP_BUFFER may not consume a single frame until its
+    // complete client buffer is primed. Never stop feeding below that device-
+    // specific threshold (17,316 frames / ~361 ms on Pixel Android 16).
+    private val effectiveTargetQueueUs = maxOf(targetQueueUs, sink.bufferCapacityDurationUs)
+
     @Volatile var isRunning: Boolean = false
         private set
     @Volatile var isEos: Boolean = false
@@ -64,7 +69,7 @@ class EngineAudioPump(
                     Thread.sleep(IDLE_SLEEP_MS)
                     continue
                 }
-                if (sink.queuedDurationUs >= targetQueueUs) {
+                if (sink.queuedDurationUs >= effectiveTargetQueueUs) {
                     Thread.sleep(IDLE_SLEEP_MS)
                     continue
                 }
