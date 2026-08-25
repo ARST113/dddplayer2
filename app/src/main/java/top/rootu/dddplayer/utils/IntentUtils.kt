@@ -18,6 +18,9 @@ import top.rootu.dddplayer.model.MediaItem
 import top.rootu.dddplayer.model.SubtitleItem
 
 object IntentUtils {
+    private const val DDD_QUERY_PREFIX = "ddd_"
+    private const val DDD_SYNC_HEADER = "X-Lampa-DDD-Sync"
+
     /**
      * Lampa duplicates DDD bridge metadata in both the query and fragment so that
      * different external players can consume it.  Those parameters belong to the
@@ -84,18 +87,20 @@ object IntentUtils {
         val dataUri = intent.data
         val extras = intent.extras ?: Bundle.EMPTY
 
-        // Lampa's DDD integration sends the complete serial playlist as an
-        // URL-encoded JSON control header.  Consume it before the generic
-        // ACTION_VIEW path; the header itself must never reach the media host.
-        parseLampaDddPlaylist(extras, dataUri)?.let { return it }
-
         // 1. Проверяем, есть ли специфичный список воспроизведения (внутренний формат)
         val videoListUris = getParcelableArrayCompat(extras, "video_list")
 
         if (!videoListUris.isNullOrEmpty()) {
-            // --- PLAYLIST MODE (Внутренний запуск) ---
+            // The sync envelope's sourceKey is an identity, not necessarily a
+            // URL.  PidTor commonly sends `infohash|S|filename.mkv` there.
+            // Always prefer the real transport URIs from video_list and only
+            // merge progress/identity metadata from X-Lampa-DDD-Sync.
             return parseInternalPlaylist(extras, videoListUris, dataUri)
         }
+
+        // Lampa can also send a complete playlist only in the control header.
+        // Use that fallback solely when every sourceKey is a real playable URI.
+        parseLampaDddPlaylist(extras, dataUri)?.let { return it }
 
         // 2. Проверяем одиночный файл (Запуск из файлового менеджера или ACTION_VIEW)
         if (dataUri != null) {
@@ -108,7 +113,7 @@ object IntentUtils {
 
     fun parseBridgeConfig(intent: Intent): BridgeConfig {
         val data = intent.data
-        val fragmentParams = parseFragmentParams(data?.fragment)
+        val fragmentParams = parseDddParams(data)
         val extrasMode = intent.getStringExtra("bridge_mode")
         val modeValue = fragmentParams["ddd_mode"] ?: extrasMode
         val mode = when (modeValue?.lowercase()) {
@@ -150,6 +155,7 @@ object IntentUtils {
         }
 
         val syncContext = parseDddSyncContext(rawUri, title, filename)
+            ?: parseLampaDddSyncContext(extras, uri, title, filename, null)
         val startPosition = getLongExtraCompat(extras, "position", 0L)
             .takeIf { it > 0L }
             ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
@@ -177,20 +183,7 @@ object IntentUtils {
         extras: Bundle,
         dataUri: Uri?
     ): Pair<List<MediaItem>, Int>? {
-        val headerPayload = getSmartStringArray(extras, "headers")
-            ?.asList()
-            ?.chunked(2)
-            ?.firstOrNull { pair ->
-                pair.size == 2 && pair[0].equals("X-Lampa-DDD-Sync", ignoreCase = true)
-            }
-            ?.getOrNull(1)
-            ?: return null
-
-        val root = try {
-            JsonParser.parseString(Uri.decode(headerPayload)).asJsonObject
-        } catch (_: Throwable) {
-            return null
-        }
+        val root = parseLampaSyncEnvelope(extras) ?: return null
         val eventsUrl = root.stringOrNull("eventsUrl") ?: return null
         val deviceId = root.stringOrNull("deviceId") ?: return null
         val items = root.getAsJsonArray("items") ?: return null
@@ -202,6 +195,10 @@ object IntentUtils {
             val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
             val sourceKey = item.stringOrNull("sourceKey") ?: return@mapNotNull null
             val uri = cleanPlaybackUri(sourceKey.toUri()) ?: return@mapNotNull null
+            // sourceKey is primarily an identity.  Only a known transport
+            // scheme makes it safe to reuse as media; values such as
+            // `hash|S|episode.mkv` or `show:s3:e6` must never reach DataSource.
+            if (!isPlayableHeaderSource(uri)) return@mapNotNull null
             val index = item.intOrNull("index") ?: return@mapNotNull null
             val title = item.stringOrNull("title") ?: item.stringOrNull("filename") ?: "Video"
             val filename = item.stringOrNull("filename")
@@ -236,7 +233,7 @@ object IntentUtils {
                 dddSyncContext = syncContext
             )
         }.sortedBy { it.first }
-        if (indexedItems.isEmpty()) return null
+        if (indexedItems.isEmpty() || indexedItems.size != items.size()) return null
 
         val activeIndex = root.intOrNull("activeIndex")
         val playlist = indexedItems.map { it.second }
@@ -265,6 +262,8 @@ object IntentUtils {
         val playlistSubsBundles = getParcelableArrayListCompat<Bundle>(extras, "video_list.subtitles")
 
         val headersMap = parseHeaders(extras)
+        val syncEnvelope = parseLampaSyncEnvelope(extras)
+        val syncActiveIndex = syncEnvelope?.intOrNull("activeIndex")
 
         val playlist = mutableListOf<MediaItem>()
         val extrasStartIndex = extras.getInt("start_index", 0)
@@ -278,6 +277,7 @@ object IntentUtils {
             if (title.isNullOrEmpty()) title = filenames?.getOrNull(i)
             if (title.isNullOrEmpty()) title = uri.lastPathSegment
             val syncContext = parseDddSyncContext(rawUri, title, filenames?.getOrNull(i))
+                ?: parseLampaDddSyncContext(extras, uri, title, filenames?.getOrNull(i), i)
 
             val itemSubs = if (playlistSubsBundles != null && i < playlistSubsBundles.size) {
                 parseSubtitles(playlistSubsBundles[i], "uris", "names")
@@ -293,7 +293,7 @@ object IntentUtils {
                     ?: syncContext?.lampaPositionMs?.takeIf { it > 0L }
                     ?: 0L
             } else {
-                0L
+                syncContext?.lampaPositionMs?.takeIf { it > 0L } ?: 0L
             }
 
             playlist.add(
@@ -311,6 +311,7 @@ object IntentUtils {
         }
         val startIndex = when {
             playlist.isEmpty() -> 0
+            syncActiveIndex != null -> syncActiveIndex.coerceIn(0, playlist.lastIndex)
             cleanDataUri != null && matchedStartIndex != null -> matchedStartIndex!!
             cleanDataUri != null -> 0
             else -> extrasStartIndex.coerceIn(0, playlist.lastIndex)
@@ -335,8 +336,32 @@ object IntentUtils {
             .orEmpty()
     }
 
+    private fun parseDddParams(uri: Uri?): Map<String, String> {
+        if (uri == null) return emptyMap()
+        val queryParams = try {
+            uri.queryParameterNames
+                .filter { it.startsWith(DDD_QUERY_PREFIX, ignoreCase = true) }
+                .associateWith { uri.getQueryParameter(it).orEmpty() }
+        } catch (_: Throwable) {
+            emptyMap()
+        }
+        // Fragment values win in browsers; query values survive Android Intents.
+        return queryParams + parseFragmentParams(uri.fragment)
+    }
+
+    private fun isPlayableHeaderSource(uri: Uri): Boolean =
+        uri.scheme?.lowercase() in setOf(
+            ContentResolver.SCHEME_CONTENT,
+            ContentResolver.SCHEME_FILE,
+            "http",
+            "https",
+            "rtsp",
+            "rtmp",
+            "udp"
+        )
+
     private fun parseDddSyncContext(uri: Uri?, title: String?, filename: String?): DddSyncContext? {
-        val params = parseFragmentParams(uri?.fragment)
+        val params = parseDddParams(uri)
         val remoteEventsUrl = params["ddd_remote_events_url"] ?: return null
         val deviceId = params["ddd_device_id"] ?: return null
         val cleanUri = cleanPlaybackUri(uri)?.toString()
@@ -363,6 +388,69 @@ object IntentUtils {
             lampaAudioTrackLanguage = params["ddd_audio_track_language"],
             lampaAudioTrackMimeType = params["ddd_audio_track_mime"],
             lampaAudioTrackChannelCount = params["ddd_audio_track_channels"]?.toIntOrNull()
+        ).takeIf { it.enabled }
+    }
+
+    private fun parseLampaSyncEnvelope(extras: Bundle): JsonObject? {
+        val payload = getSmartStringArray(extras, "headers")
+            ?.asList()
+            ?.chunked(2)
+            ?.firstOrNull { pair ->
+                pair.size == 2 && pair[0].equals(DDD_SYNC_HEADER, ignoreCase = true)
+            }
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return try {
+            JsonParser.parseString(Uri.decode(payload)).asJsonObject
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun parseLampaDddSyncContext(
+        extras: Bundle,
+        playbackUri: Uri,
+        title: String?,
+        filename: String?,
+        playlistIndex: Int?
+    ): DddSyncContext? {
+        val root = parseLampaSyncEnvelope(extras) ?: return null
+        val eventsUrl = root.stringOrNull("eventsUrl") ?: return null
+        val deviceId = root.stringOrNull("deviceId") ?: return null
+        val targetIndex = playlistIndex ?: root.intOrNull("activeIndex") ?: 0
+        val items = root.getAsJsonArray("items") ?: return null
+        val item = items
+            .mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
+            .firstOrNull { (it.intOrNull("index") ?: -1) == targetIndex }
+            ?: targetIndex.takeIf { it in 0 until items.size() }
+                ?.let(items::get)
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+            ?: return null
+
+        return DddSyncContext(
+            remoteEventsUrl = eventsUrl,
+            remoteLatestUrl = root.stringOrNull("latestUrl"),
+            schema = root.intOrNull("schema") ?: 1,
+            deviceId = deviceId,
+            sessionId = root.stringOrNull("sessionId"),
+            contentKey = item.stringOrNull("contentKey"),
+            sourceKey = item.stringOrNull("sourceKey"),
+            timelineHash = item.stringOrNull("timelineHash") ?: root.stringOrNull("timelineHash"),
+            sourceKind = item.stringOrNull("sourceKind"),
+            uri = playbackUri.toString(),
+            title = item.stringOrNull("title") ?: title,
+            filename = item.stringOrNull("filename") ?: filename,
+            lampaPositionMs = item.longOrNull("positionMs"),
+            lampaDurationMs = item.longOrNull("durationMs"),
+            lampaPercent = item.intOrNull("percent"),
+            lampaAudioTrack = item.stringOrNull("audioTrack"),
+            lampaAudioTrackId = item.stringOrNull("audioTrackId"),
+            lampaAudioTrackIndex = item.intOrNull("audioTrackIndex"),
+            lampaAudioTrackLanguage = item.stringOrNull("audioTrackLanguage"),
+            lampaAudioTrackMimeType = item.stringOrNull("audioTrackMime"),
+            lampaAudioTrackChannelCount = item.intOrNull("audioTrackChannels")
         ).takeIf { it.enabled }
     }
 

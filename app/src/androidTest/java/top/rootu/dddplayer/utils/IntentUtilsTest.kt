@@ -2,6 +2,7 @@ package top.rootu.dddplayer.utils
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Parcelable
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -85,5 +86,53 @@ class IntentUtilsTest {
         assertEquals("http://lampac.fun/pidtor/a?rjson=true&tsid=1", playlist[0].uri.toString())
         assertEquals("show:s1:e2", playlist[1].dddSyncContext?.contentKey)
         assertEquals(mapOf("User-Agent" to "Lampa"), playlist[1].headers)
+    }
+
+    @Test
+    fun realVideoListWinsOverLogicalPidtorSyncKeys() {
+        val episode5 = Uri.parse(
+            "http://213.171.26.189:2367/stream/Silo.S03E05.mkv?link=hash&index=5&play"
+        )
+        val episode6 = Uri.parse(
+            "http://213.171.26.189:2367/stream/Silo.S03E06.mkv?link=hash&index=6&play"
+        )
+        val payload = """{
+          "eventsUrl":"http://lampac.fun/ddd-sync/v1/events",
+          "latestUrl":"http://lampac.fun/ddd-sync/v1/latest",
+          "schema":1,
+          "deviceId":"pixel",
+          "sessionId":"session",
+          "activeIndex":1,
+          "items":[
+            {"index":0,"contentKey":"silo:s3:e5","sourceKey":"4ade661a36f3db572d03591edc58b8eb0cf46ed2|S|Silo.S03E05.mkv","title":"Silo 5","filename":"Silo.S03E05.mkv","positionMs":12000},
+            {"index":1,"contentKey":"silo:s3:e6","sourceKey":"4ade661a36f3db572d03591edc58b8eb0cf46ed2|S|Silo.S03E06.mkv","title":"Silo 6","filename":"Silo.S03E06.mkv","positionMs":3000}
+          ]
+        }""".trimIndent()
+        val intent = Intent(Intent.ACTION_VIEW, episode6)
+            .putExtra("video_list", arrayOf<Parcelable>(episode5, episode6))
+            .putExtra("video_list.name", arrayOf("Silo 5", "Silo 6"))
+            .putExtra(
+                "headers",
+                arrayOf(DDD_SYNC_HEADER_FOR_TEST, Uri.encode(payload), "User-Agent", "Lampa")
+            )
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val (playlist, startIndex) = IntentUtils.parseIntent(context, intent)
+
+        assertEquals(2, playlist.size)
+        assertEquals(1, startIndex)
+        assertEquals(episode5.toString(), playlist[0].uri.toString())
+        assertEquals(episode6.toString(), playlist[1].uri.toString())
+        assertFalse(playlist.any { it.uri.toString().contains("|S|") })
+        assertEquals(
+            "4ade661a36f3db572d03591edc58b8eb0cf46ed2|S|Silo.S03E06.mkv",
+            playlist[1].dddSyncContext?.sourceKey
+        )
+        assertEquals(12000L, playlist[0].startPositionMs)
+        assertEquals(3000L, playlist[1].startPositionMs)
+    }
+
+    private companion object {
+        const val DDD_SYNC_HEADER_FOR_TEST = "X-Lampa-DDD-Sync"
     }
 }
