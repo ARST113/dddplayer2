@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -25,14 +26,30 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Prepare Just+ v1.2.0 transition source
+        run: bash scripts/prepare-justplus.sh
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build Just Player 0.0.15 debug APK
+        run: |
+          ./gradlew :justplusapp:assembleLatestUniversalDebug \
+            -PuseJustPlus=true \
+            -PversionNameOverride=0.0.15 \
+            -PversionCodeOverride=1500000 \
+            --stacktrace
+
+      - name: Collect debug APK
+        run: |
+          set -euo pipefail
+          mkdir -p build-artifacts
+          APK="$(find .justplus-upstream/app/build/outputs/apk -type f -name '*.apk' | grep -i latest | grep -i debug | head -n1)"
+          test -n "$APK"
+          cp "$APK" build-artifacts/just-player-v0.0.15-debug.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: dddplayer-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: just-player-v0.0.15-debug
+          path: build-artifacts/just-player-v0.0.15-debug.apk
