@@ -34,7 +34,7 @@ JNI="$MEDIA/$MOD/src/main/jni"
 NDK_VERSION="27.0.12077973"
 NDK_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}/ndk/$NDK_VERSION"
 if [[ ! -d "$NDK_PATH" ]]; then
-  yes | "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+  printf "y\n" | "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
 fi
 HOST_PLATFORM="linux-x86_64"
 API=24
