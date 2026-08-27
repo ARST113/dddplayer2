@@ -42,6 +42,9 @@ jobs:
           echo "=== FFmpeg renderer classes ==="
           jar tf /tmp/ffmpeg-classes.jar | grep -E 'ExperimentalFfmpegVideoRenderer|FfmpegVideoDecoder|FfmpegAudioRenderer|FfmpegDecoder' || true
 
+      - name: Build HEVC-capable Media3 FFmpeg extension
+        run: bash scripts/build-media3-hevc-ffmpeg.sh
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
