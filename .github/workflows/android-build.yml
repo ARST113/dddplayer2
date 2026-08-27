@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -37,10 +37,44 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Just Player 0.0.15 debug APK
+        id: build
+        continue-on-error: true
         run: |
+          set -o pipefail
           ./gradlew :justplusapp:assembleLatestUniversalDebug \
             -PuseJustPlus=true \
-            --stacktrace
+            --stacktrace 2>&1 | tee ci-gradle.log
+
+      - name: Save Gradle failure log to branch
+        if: steps.build.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s ci-gradle.log
+          CONTENT="$(base64 -w0 ci-gradle.log)"
+          SHA="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/ci/last-gradle.log?ref=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha", ""))' || true)"
+          if [ -n "$SHA" ]; then
+            curl -fsSL -X PUT \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/ci/last-gradle.log" \
+              -d "$(python3 -c 'import json,os; print(json.dumps({"message":"ci: update failed v0.0.15 Gradle log","content":os.environ["CONTENT"],"sha":os.environ["SHA"],"branch":os.environ.get("GITHUB_HEAD_REF") or os.environ["GITHUB_REF_NAME"]}))')"
+          else
+            curl -fsSL -X PUT \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/contents/ci/last-gradle.log" \
+              -d "$(python3 -c 'import json,os; print(json.dumps({"message":"ci: capture failed v0.0.15 Gradle log","content":os.environ["CONTENT"],"branch":os.environ.get("GITHUB_HEAD_REF") or os.environ["GITHUB_REF_NAME"]}))')"
+          fi
+
+      - name: Fail after diagnostic capture
+        if: steps.build.outcome == 'failure'
+        run: exit 1
 
       - name: Collect debug APK
         run: |
