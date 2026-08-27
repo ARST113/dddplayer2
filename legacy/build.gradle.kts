@@ -109,7 +109,7 @@ dependencies {
 
     // Legacy DDD sources were written against Media3 1.9.0. Compile against that
     // API; Just+ supplies the Media3 runtime used by the final application.
-    val media3 = "1.9.0"
+    val media3 = "1.11.0-beta01"
     compileOnly("androidx.media3:media3-common:$media3")
     compileOnly("androidx.media3:media3-container:$media3")
     compileOnly("androidx.media3:media3-datasource:$media3")
