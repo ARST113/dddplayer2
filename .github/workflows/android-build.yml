@@ -37,11 +37,25 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build Just Player 0.0.15 debug APK
+        id: build
+        continue-on-error: true
         run: |
           set -o pipefail
           ./gradlew :justplusapp:assembleLatestUniversalDebug \
             -PuseJustPlus=true \
             --stacktrace 2>&1 | tee ci-gradle.log
+
+      - name: Upload Gradle log for diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0.0.15-gradle-log-${{ github.run_number }}
+          path: ci-gradle.log
+          if-no-files-found: error
+
+      - name: Fail after diagnostic capture
+        if: steps.build.outcome == 'failure'
+        run: exit 1
 
       - name: Collect debug APK
         run: |
