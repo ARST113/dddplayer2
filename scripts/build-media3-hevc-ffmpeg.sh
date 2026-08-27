@@ -95,6 +95,19 @@ popd >/dev/null
 mkdir -p "$JNI/libyuv/android-libs/arm64-v8a"
 cp "$JNI/libyuv/build-arm64-v8a/libyuv.so" "$JNI/libyuv/android-libs/arm64-v8a/libyuv.so"
 
+echo "==> Limit FFmpeg extension to the ABI actually built for this transition APK"
+python3 - <<'PY'
+from pathlib import Path
+p = Path("libraries/decoder_ffmpeg/build.gradle")
+s = p.read_text()
+if "abiFilters 'arm64-v8a'" not in s:
+    marker = "android {\n"
+    if marker not in s:
+        raise SystemExit("decoder_ffmpeg android block not found")
+    s = s.replace(marker, "android {\n    defaultConfig {\n        ndk { abiFilters 'arm64-v8a' }\n    }\n", 1)
+p.write_text(s)
+PY
+
 echo "==> Build Media3 FFmpeg AAR against exact Just+ Media3 version"
 pushd "$MEDIA" >/dev/null
 chmod +x ./gradlew
