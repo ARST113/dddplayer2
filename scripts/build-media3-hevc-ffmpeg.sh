@@ -74,6 +74,10 @@ popd >/dev/null
 
 echo "==> Build libyuv arm64"
 git clone -q --depth 1 https://chromium.googlesource.com/libyuv/libyuv "$JNI/libyuv"
+# NDK 27/Clang 18 can pass libyuv's C SME probe but cannot compile the C++
+# __arm_new("za") implementation used by current rotate_sme.cc. SME is only
+# an optimization; disable that object set and keep NEON/SVE paths.
+sed -i 's/if (CAN_COMPILE_SME)/if (FALSE)/' "$JNI/libyuv/CMakeLists.txt"
 mkdir -p "$JNI/libyuv/build-arm64-v8a"
 pushd "$JNI/libyuv/build-arm64-v8a" >/dev/null
 cmake .. \
