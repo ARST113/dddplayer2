@@ -84,6 +84,16 @@ class NativePlaybackBackend(
         prepareInternal(uri, headers, startPositionMs, shouldPlay = true)
     }
 
+    /** Start directly on libavcodec after Just+/MediaCodec has already rejected HEVC. */
+    fun prepareSoftware(uri: Uri, headers: Map<String, String> = emptyMap(), startPositionMs: Long = 0L) {
+        availableAudioTracks = emptyList()
+        selectedAudioTrackId = null
+        availableSubtitleTracks = listOf(SUBTITLE_OFF)
+        selectedSubtitleTrackId = SUBTITLE_OFF_ID
+        forceSoftwareVideo = true
+        prepareInternal(uri, headers, startPositionMs, shouldPlay = true)
+    }
+
     private fun prepareInternal(
         uri: Uri,
         headers: Map<String, String>,
