@@ -34,6 +34,14 @@ jobs:
           bash scripts/prepare-justplus.sh
           bash scripts/fix-justplus-v015-gradle.sh
 
+      - name: Inspect bundled FFmpeg extension
+        run: |
+          set -euo pipefail
+          AAR=".justplus-upstream/app/libs/lib-decoder-ffmpeg-release.aar"
+          unzip -p "$AAR" classes.jar > /tmp/ffmpeg-classes.jar
+          echo "=== FFmpeg renderer classes ==="
+          jar tf /tmp/ffmpeg-classes.jar | grep -E 'ExperimentalFfmpegVideoRenderer|FfmpegVideoDecoder|FfmpegAudioRenderer|FfmpegDecoder' || true
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
