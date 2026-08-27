@@ -29,6 +29,7 @@ android {
 
     defaultConfig {
         minSdk = 23
+        vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "VERSION_NAME", "\"0.0.15-legacy\"")
         buildConfigField("int", "VERSION_CODE", "1500000")
         ndk {
