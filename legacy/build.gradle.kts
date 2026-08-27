@@ -105,10 +105,9 @@ dependencies {
     implementation(libs.coil)
     ksp(libs.androidx.room.compiler)
 
-    // Legacy DDD code compiles against the same Media3 API generation used by Just+.
-    // The final APK receives ExoPlayer/UI from Just+'s patched local AARs, so these
-    // dependencies are compileOnly to avoid duplicate androidx.media3 classes.
-    val media3 = "1.11.0-beta01"
+    // Legacy DDD sources were written against Media3 1.9.0. Compile against that
+    // API; Just+ supplies the Media3 runtime used by the final application.
+    val media3 = "1.9.0"
     compileOnly("androidx.media3:media3-common:$media3")
     compileOnly("androidx.media3:media3-container:$media3")
     compileOnly("androidx.media3:media3-datasource:$media3")
@@ -116,6 +115,7 @@ dependencies {
     compileOnly("androidx.media3:media3-decoder:$media3")
     compileOnly("androidx.media3:media3-extractor:$media3")
     compileOnly("androidx.media3:media3-session:$media3")
+    compileOnly("androidx.media3:media3-exoplayer:$media3")
     compileOnly("androidx.media3:media3-exoplayer-hls:$media3")
     compileOnly("androidx.media3:media3-exoplayer-dash:$media3")
     compileOnly("androidx.media3:media3-exoplayer-smoothstreaming:$media3")
@@ -125,6 +125,5 @@ dependencies {
         "include" to listOf("lib-*.aar")
     )))
 
-    // Kept only for the legacy fallback activity. Normal playback stays entirely in Just+.
     implementation("org.videolan.android:libvlc-all:3.7.5")
 }
