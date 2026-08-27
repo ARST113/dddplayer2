@@ -33,6 +33,8 @@ if "implementation project(path: ':legacy')" not in s:
     s = s.replace('dependencies {\n', "dependencies {\n    implementation project(path: ':legacy')\n", 1)
 if "androidx.documentfile:documentfile" not in s:
     s = s.replace('dependencies {\n', "dependencies {\n    implementation \'androidx.documentfile:documentfile:1.1.0\'\n", 1)
+if "media3-datasource-okhttp" not in s:
+    s = s.replace('dependencies {\n', "dependencies {\n    implementation \"androidx.media3:media3-datasource-okhttp:1.11.0-beta01\"\n", 1)
 build.write_text(s)
 
 # Visible identity: Android package/signature stay DDD-compatible, UI becomes Just Player.
