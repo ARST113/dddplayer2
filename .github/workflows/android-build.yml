@@ -41,6 +41,8 @@ jobs:
           unzip -p "$AAR" classes.jar > /tmp/ffmpeg-classes.jar
           echo "=== FFmpeg renderer classes ==="
           jar tf /tmp/ffmpeg-classes.jar | grep -E 'ExperimentalFfmpegVideoRenderer|FfmpegVideoDecoder|FfmpegAudioRenderer|FfmpegDecoder' || true
+          echo "=== FFmpeg video renderer bytecode ==="
+          javap -classpath /tmp/ffmpeg-classes.jar -c -p androidx.media3.decoder.ffmpeg.ExperimentalFfmpegVideoRenderer | sed -n '1,260p'
 
       - name: Build HEVC-capable Media3 FFmpeg extension
         run: bash scripts/build-media3-hevc-ffmpeg.sh
