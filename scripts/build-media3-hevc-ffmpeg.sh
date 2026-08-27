@@ -96,6 +96,7 @@ mkdir -p "$JNI/libyuv/android-libs/arm64-v8a"
 cp "$JNI/libyuv/build-arm64-v8a/libyuv.so" "$JNI/libyuv/android-libs/arm64-v8a/libyuv.so"
 
 echo "==> Limit FFmpeg extension to the ABI actually built for this transition APK"
+pushd "$MEDIA" >/dev/null
 python3 - <<'PY'
 from pathlib import Path
 p = Path("libraries/decoder_ffmpeg/build.gradle")
@@ -109,7 +110,6 @@ p.write_text(s)
 PY
 
 echo "==> Build Media3 FFmpeg AAR against exact Just+ Media3 version"
-pushd "$MEDIA" >/dev/null
 chmod +x ./gradlew
 ./gradlew :lib-decoder-ffmpeg:assembleRelease --stacktrace
 AAR="$(find libraries/decoder_ffmpeg -type f -name '*.aar' | grep -i release | head -n1)"
