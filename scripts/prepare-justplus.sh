@@ -122,7 +122,7 @@ methods = r'''
         if (originalUri != null && !originalUri.isEmpty()) {
             legacy.setData(Uri.parse(originalUri));
         }
-        legacy.setClassName(getPackageName(), "top.rootu.dddplayer.ui.PlayerActivity");
+        legacy.setClassName(getPackageName(), "com.brouken.player.LegacyHevcActivity");
         legacy.putExtra(JustPlusBridgeInterop.EXTRA_FORCE_LEGACY, true);
         if (player != null) {
             legacy.putExtra("position", player.getCurrentPosition());
@@ -200,6 +200,102 @@ if 'Just+ router failed' not in s:
         raise SystemExit('Legacy PlayerActivity onCreate marker not found')
     s = s.replace(router_marker, router, 1)
 legacy_pa.write_text(s)
+
+
+# ---- Generate Just+-UI HEVC fallback Activity ----
+legacy_activity = up / "app/src/main/java/com/brouken/player/LegacyHevcActivity.java"
+legacy_activity.write_text(r'''package com.brouken.player;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Looper;
+import android.view.WindowManager;
+
+import androidx.annotation.Nullable;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import top.rootu.dddplayer.compat.JustPlusBridgeInterop;
+import top.rootu.dddplayer.compat.LegacyHevcPlayer;
+
+/**
+ * Just+ controller surface backed by DDD/libavcodec for unsupported HEVC.
+ * The old DDD Activity remains only as the last-resort fallback.
+ */
+public final class LegacyHevcActivity extends Activity {
+    private LegacyHevcPlayer legacyPlayer;
+    private com.brouken.player.dtpv.DoubleTapPlayerView videoView;
+
+    @Override
+    protected void onCreate(@Nullable Bundle state) {
+        super.onCreate(state);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setContentView(R.layout.activity_player);
+
+        videoView = findViewById(R.id.video_view);
+        final Intent intent = getIntent();
+        Uri uri = intent.getData();
+        final String original = intent.getStringExtra(JustPlusBridgeInterop.EXTRA_ORIGINAL_URI);
+        if (original != null && !original.isEmpty()) {
+            uri = Uri.parse(original);
+        }
+        if (uri == null) {
+            finish();
+            return;
+        }
+
+        final HashMap<String, String> headers = new HashMap<>();
+        final String[] flat = intent.getStringArrayExtra("headers");
+        if (flat != null) {
+            for (int i = 0; i + 1 < flat.length; i += 2) {
+                final String name = flat[i];
+                final String value = flat[i + 1];
+                if (name == null || value == null) continue;
+                if (name.regionMatches(true, 0, "X-Lampa-DDD-", 0, "X-Lampa-DDD-".length())) continue;
+                headers.put(name, value);
+            }
+        }
+
+        final CharSequence titleValue = intent.getCharSequenceExtra("title");
+        final String title = titleValue == null ? null : titleValue.toString();
+        final long position = Math.max(0L, intent.getLongExtra("position", 0L));
+
+        legacyPlayer = new LegacyHevcPlayer(
+                Looper.getMainLooper(), uri, headers, position, title);
+        videoView.setPlayer(legacyPlayer);
+        legacyPlayer.prepare();
+        legacyPlayer.play();
+        videoView.showController();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (videoView != null) videoView.setPlayer(null);
+        if (legacyPlayer != null) {
+            legacyPlayer.release();
+            legacyPlayer = null;
+        }
+        super.onDestroy();
+    }
+}
+''')
+
+# Register the internal fallback activity under the same Just+ theme.
+manifest = up / "app/src/main/AndroidManifest.xml"
+ms = manifest.read_text()
+if 'android:name=".LegacyHevcActivity"' not in ms:
+    insert = '''        <activity
+            android:name=".LegacyHevcActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|touchscreen"
+            android:exported="false"
+            android:theme="@style/Theme.Player" />
+'''
+    ms = ms.replace('        <activity\n            android:name=".PlayerActivity"', insert + '        <activity\n            android:name=".PlayerActivity"', 1)
+    manifest.write_text(ms)
+
 
 print('Prepared Just+ v1.2.0 transition source')
 PY
