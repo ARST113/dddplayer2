@@ -99,13 +99,13 @@ echo "==> Limit FFmpeg extension to the ABI actually built for this transition A
 pushd "$MEDIA" >/dev/null
 python3 - <<'PY'
 from pathlib import Path
-p = Path("libraries/decoder_ffmpeg/build.gradle")
+p = Path("libraries/decoder_ffmpeg/build.gradle.kts")
 s = p.read_text()
 if "abiFilters 'arm64-v8a'" not in s:
     marker = "android {\n"
     if marker not in s:
         raise SystemExit("decoder_ffmpeg android block not found")
-    s = s.replace(marker, "android {\n    defaultConfig {\n        ndk { abiFilters 'arm64-v8a' }\n    }\n", 1)
+    s = s.replace(marker, "android {\n  defaultConfig {\n    ndk { abiFilters += listOf(\"arm64-v8a\") }\n  }\n", 1)
 p.write_text(s)
 PY
 
