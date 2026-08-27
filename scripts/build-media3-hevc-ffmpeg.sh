@@ -82,7 +82,10 @@ cmake .. \
   -DANDROID_PLATFORM=android-$API \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=ON \
-  -DANDROID_STL=c++_shared
+  -DANDROID_STL=c++_shared \
+  -DCAN_COMPILE_SME=FALSE \
+  -DCMAKE_C_FLAGS="-DLIBYUV_DISABLE_SME" \
+  -DCMAKE_CXX_FLAGS="-DLIBYUV_DISABLE_SME"
 cmake --build . -j2
 popd >/dev/null
 mkdir -p "$JNI/libyuv/android-libs/arm64-v8a"
