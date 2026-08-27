@@ -34,6 +34,9 @@ jobs:
           bash scripts/prepare-justplus.sh
           bash scripts/fix-justplus-v015-gradle.sh
 
+      - name: Build HEVC-capable Media3 FFmpeg extension
+        run: bash scripts/build-media3-hevc-ffmpeg.sh
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
