@@ -45,6 +45,8 @@ git clone -q --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git
 pushd "$JNI/ffmpeg" >/dev/null
 ./configure \
   --target-os=android \
+  --enable-cross-compile \
+  --cross-prefix="$TOOLCHAIN/aarch64-linux-android${API}-" \
   --arch=aarch64 \
   --cpu=armv8-a \
   --cc="$TOOLCHAIN/aarch64-linux-android${API}-clang" \
