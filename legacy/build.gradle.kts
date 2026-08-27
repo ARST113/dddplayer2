@@ -1,11 +1,10 @@
 import org.gradle.api.tasks.Sync
 
 plugins {
+    alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.ksp)
 }
-apply(plugin = "com.android.library")
-// KSP must see the Android target already created by com.android.library under Kotlin 2.2.
-apply(plugin = "com.google.devtools.ksp")
 
 val nativeRoot = rootProject.file("native")
 val ffmpegAbis = listOf("arm64-v8a")
