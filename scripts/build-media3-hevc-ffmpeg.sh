@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="$ROOT/.media3-hevc-ffmpeg"
+MEDIA="$WORK/media"
+DONOR="$WORK/donor"
+OUT="$ROOT/.justplus-upstream/app/libs/lib-decoder-ffmpeg-release.aar"
+
+MEDIA_TAG="1.11.0-beta01"
+DONOR_COMMIT="57346bb"
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+
+echo "==> Clone Media3 $MEDIA_TAG"
+git clone --depth 1 --branch "$MEDIA_TAG" https://github.com/androidx/media.git "$MEDIA"
+
+echo "==> Fetch tested FFmpeg video renderer implementation"
+git init -q "$DONOR"
+git -C "$DONOR" remote add origin https://github.com/rabbitknight/media.git
+git -C "$DONOR" fetch -q --depth 1 origin "$DONOR_COMMIT"
+git -C "$DONOR" checkout -q FETCH_HEAD
+
+MOD="libraries/decoder_ffmpeg"
+cp "$DONOR/$MOD/src/main/java/androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoRenderer.java" \
+   "$MEDIA/$MOD/src/main/java/androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoRenderer.java"
+cp "$DONOR/$MOD/src/main/java/androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoDecoder.java" \
+   "$MEDIA/$MOD/src/main/java/androidx/media3/decoder/ffmpeg/ExperimentalFfmpegVideoDecoder.java"
+cp "$DONOR/$MOD/src/main/jni/ffmpeg_jni.cc" "$MEDIA/$MOD/src/main/jni/ffmpeg_jni.cc"
+cp "$DONOR/$MOD/src/main/jni/CMakeLists.txt" "$MEDIA/$MOD/src/main/jni/CMakeLists.txt"
+
+JNI="$MEDIA/$MOD/src/main/jni"
+NDK_VERSION="27.0.12077973"
+NDK_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}/ndk/$NDK_VERSION"
+if [[ ! -d "$NDK_PATH" ]]; then
+  yes | "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+fi
+HOST_PLATFORM="linux-x86_64"
+API=24
+TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/$HOST_PLATFORM/bin"
+
+echo "==> Build FFmpeg 6.0 arm64 with audio + HEVC software decoders"
+git clone -q --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git "$JNI/ffmpeg"
+pushd "$JNI/ffmpeg" >/dev/null
+./configure \
+  --target-os=android \
+  --arch=aarch64 \
+  --cpu=armv8-a \
+  --cc="$TOOLCHAIN/aarch64-linux-android${API}-clang" \
+  --cxx="$TOOLCHAIN/aarch64-linux-android${API}-clang++" \
+  --ar="$TOOLCHAIN/llvm-ar" \
+  --nm="$TOOLCHAIN/llvm-nm" \
+  --ranlib="$TOOLCHAIN/llvm-ranlib" \
+  --strip="$TOOLCHAIN/llvm-strip" \
+  --libdir="android-libs/arm64-v8a" \
+  --target-os=android \
+  --disable-static --enable-shared \
+  --disable-doc --disable-programs --disable-avdevice \
+  --disable-everything \
+  --enable-avcodec --enable-avutil --enable-swresample --enable-swscale \
+  --disable-postproc --disable-avfilter --disable-symver --disable-v4l2-m2m --disable-vulkan \
+  --enable-decoder=vorbis --enable-decoder=opus --enable-decoder=flac --enable-decoder=alac \
+  --enable-decoder=pcm_mulaw --enable-decoder=pcm_alaw --enable-decoder=mp3 \
+  --enable-decoder=amrnb --enable-decoder=amrwb --enable-decoder=aac \
+  --enable-decoder=ac3 --enable-decoder=eac3 --enable-decoder=dca \
+  --enable-decoder=mlp --enable-decoder=truehd \
+  --enable-decoder=hevc
+make -j2
+make install-libs
+popd >/dev/null
+
+echo "==> Build libyuv arm64"
+git clone -q --depth 1 https://chromium.googlesource.com/libyuv/libyuv "$JNI/libyuv"
+mkdir -p "$JNI/libyuv/build-arm64-v8a"
+pushd "$JNI/libyuv/build-arm64-v8a" >/dev/null
+cmake .. \
+  -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-$API \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=ON \
+  -DANDROID_STL=c++_shared
+cmake --build . -j2
+popd >/dev/null
+mkdir -p "$JNI/libyuv/android-libs/arm64-v8a"
+cp "$JNI/libyuv/build-arm64-v8a/libyuv.so" "$JNI/libyuv/android-libs/arm64-v8a/libyuv.so"
+
+echo "==> Build Media3 FFmpeg AAR against exact Just+ Media3 version"
+pushd "$MEDIA" >/dev/null
+chmod +x ./gradlew
+./gradlew :lib-decoder-ffmpeg:assembleRelease --stacktrace
+AAR="$(find libraries/decoder_ffmpeg -type f -name '*.aar' | grep -i release | head -n1)"
+test -n "$AAR"
+mkdir -p "$(dirname "$OUT")"
+cp "$AAR" "$OUT"
+popd >/dev/null
+
+echo "HEVC-capable FFmpeg extension: $OUT"
