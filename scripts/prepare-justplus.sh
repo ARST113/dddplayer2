@@ -20,6 +20,7 @@ up = root / ".justplus-upstream"
 build = up / "app/build.gradle"
 s = build.read_text()
 s = s.replace('applicationId "com.justplus.player"', 'applicationId "top.rootu.dddplayer"')
+s = s.replace('minSdkVersion 23', 'minSdkVersion 24')
 s = s.replace('versionCode tagVersionCode', 'versionCode (project.findProperty("versionCodeOverride") ?: "1500000").toString().toInteger()')
 s = s.replace('versionName tagVersionName', 'versionName (project.findProperty("versionNameOverride") ?: "0.0.15").toString()')
 
