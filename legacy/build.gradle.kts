@@ -72,7 +72,7 @@ android {
 
     packaging {
         jniLibs {
-            keepDebugSymbols += "*/*/libav*_ddd.so"
+            excludes += "**/libc++_shared.so"\n            keepDebugSymbols += "*/*/libav*_ddd.so"
             keepDebugSymbols += "*/*/libsw*_ddd.so"
         }
     }
