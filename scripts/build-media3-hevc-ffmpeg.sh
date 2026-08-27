@@ -8,7 +8,7 @@ DONOR="$WORK/donor"
 OUT="$ROOT/.justplus-upstream/app/libs/lib-decoder-ffmpeg-release.aar"
 
 MEDIA_TAG="1.11.0-beta01"
-DONOR_COMMIT="57346bb"
+DONOR_COMMIT="57346bbf36a7456e99008298cf55ce16011401db"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
