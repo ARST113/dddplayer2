@@ -29,6 +29,14 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Prepare Just+ v1.2.0 transition source
+        run: |
+          bash scripts/prepare-justplus.sh
+          bash scripts/fix-justplus-v015-gradle.sh
+
+      - name: Build HEVC-capable Media3 FFmpeg extension
+        run: bash scripts/build-media3-hevc-ffmpeg.sh
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
@@ -87,21 +95,26 @@ jobs:
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
-      - name: Build signed release APK
+      - name: Build signed Just Player release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          ./gradlew assembleRelease \
-            -PversionNameOverride=${{ steps.version.outputs.version_name }} \
-            -PversionCodeOverride=${{ steps.version.outputs.version_code }} \
+          ./gradlew :justplusapp:assembleLatestUniversalRelease \
+            -PuseJustPlus=true \
             --stacktrace
 
       - name: Rename release APK
         run: |
+          set -euo pipefail
           mkdir -p release-artifacts
-          cp app/build/outputs/apk/release/app-release.apk release-artifacts/dddplayer-v${{ steps.version.outputs.version_name }}-release.apk
+          APK="$(find .justplus-upstream/app/build/outputs/apk -type f -name '*.apk' | grep -i latest | grep -i universal | grep -i release | head -n1)"
+          if [ -z "$APK" ]; then
+            APK="$(find .justplus-upstream/app/build/outputs/apk -type f -name '*.apk' | grep -i release | head -n1)"
+          fi
+          test -n "$APK"
+          cp "$APK" release-artifacts/dddplayer-v${{ steps.version.outputs.version_name }}-release.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

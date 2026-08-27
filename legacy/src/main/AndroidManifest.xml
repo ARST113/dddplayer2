@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <application>
+        <!--
+          Legacy DDD is no longer a launcher/player backend in the transition APK.
+          It remains addressable under its old explicit component name and is used
+          only when Just+ reports an HEVC decoder failure.
+        -->
+        <activity
+            android:name="top.rootu.dddplayer.ui.PlayerActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|keyboard|navigation"
+            android:theme="@style/AppTheme" />
+        <activity
+            android:name="top.rootu.dddplayer.ui.GlobalSettingsActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+        <activity
+            android:name="top.rootu.dddplayer.ui.CrashActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme" />
+    </application>
+</manifest>

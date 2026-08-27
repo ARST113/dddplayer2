@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Surface
 import android.view.SurfaceHolder
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -38,6 +39,7 @@ class NativePlaybackBackend(
 
     @Volatile private var listener: PlaybackBackend.Listener? = null
     @Volatile private var holder: SurfaceHolder? = null
+    @Volatile private var directSurface: Surface? = null
     @Volatile private var worker: Thread? = null
     @Volatile private var demuxHandle = 0L
     @Volatile private var activeIo: DataSourceEngineIo? = null
@@ -62,6 +64,14 @@ class NativePlaybackBackend(
 
     override fun attachSurfaceHolder(surfaceHolder: SurfaceHolder?) {
         holder = surfaceHolder
+        directSurface = surfaceHolder?.surface
+        surfaceGeneration.incrementAndGet()
+    }
+
+    /** Direct Surface entry point for the Just+ compatibility player. */
+    fun attachSurface(surface: Surface?) {
+        holder = null
+        directSurface = surface
         surfaceGeneration.incrementAndGet()
     }
 
@@ -71,6 +81,16 @@ class NativePlaybackBackend(
         availableSubtitleTracks = listOf(SUBTITLE_OFF)
         selectedSubtitleTrackId = SUBTITLE_OFF_ID
         forceSoftwareVideo = false
+        prepareInternal(uri, headers, startPositionMs, shouldPlay = true)
+    }
+
+    /** Start directly on libavcodec after Just+/MediaCodec has already rejected HEVC. */
+    fun prepareSoftware(uri: Uri, headers: Map<String, String> = emptyMap(), startPositionMs: Long = 0L) {
+        availableAudioTracks = emptyList()
+        selectedAudioTrackId = null
+        availableSubtitleTracks = listOf(SUBTITLE_OFF)
+        selectedSubtitleTrackId = SUBTITLE_OFF_ID
+        forceSoftwareVideo = true
         prepareInternal(uri, headers, startPositionMs, shouldPlay = true)
     }
 
@@ -380,7 +400,7 @@ class NativePlaybackBackend(
             } else if (renderer == null || seenSurfaceGeneration != currentSurfaceGeneration) {
                 renderer?.release()
                 renderer = null
-                renderer = holder?.surface?.takeIf { it.isValid }
+                renderer = (directSurface ?: holder?.surface)?.takeIf { it.isValid }
                     ?.let { NativeRenderer.forSurface(it) }
                 if (renderer != null) {
                     renderer.setHdrParams(NativeRenderer.HdrParams.from(probe.color, 500f))
